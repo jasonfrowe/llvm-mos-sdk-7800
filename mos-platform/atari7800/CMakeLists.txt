@@ -6,7 +6,9 @@ endif()
 
 install(FILES atari7800.h TYPE INCLUDE)
 
-add_platform_library(atari7800-crt0)
+add_platform_library(atari7800-crt0
+  reset.S
+)
 merge_libraries(atari7800-crt0
   common-init-stack
   common-copy-data

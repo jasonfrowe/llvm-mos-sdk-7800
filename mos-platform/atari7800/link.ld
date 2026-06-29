@@ -26,6 +26,10 @@ __rc0 = 0x80;
 INCLUDE imag-regs.ld
 ASSERT(__rc31 == 0x9f, "Inconsistent zero page map.")
 
+/* Provide default interrupt handlers if the program does not define them. */
+PROVIDE(nmi = _atari7800_irq_default);
+PROVIDE(irq = _atari7800_irq_default);
+
 REGION_ALIAS("c_readonly", cart_rom)
 REGION_ALIAS("c_writeable", ram)
 
@@ -100,9 +104,9 @@ SECTIONS {
     BYTE(0xf7)
 
     /* CPU vectors. */
-    SHORT(0)
+    SHORT(nmi)
     SHORT(_start)
-    SHORT(0)
+    SHORT(irq)
   } >cart_rom
 }
 
