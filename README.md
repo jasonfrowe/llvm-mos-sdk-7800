@@ -11,6 +11,7 @@ The LLVM-MOS compiler toolchain and platform libraries.
   - [TigerVision 3E (2-KiB fixed, 2-KiB banked ROM or RAM)](https://www.taswegian.com/WoodgrainWizard/tiki-index.php?page=3E)
 - [Atari 5200](https://en.wikipedia.org/wiki/Atari_5200) Super Cart from [32 KiB](https://github.com/atari800/atari800/blob/ATARI800_5_2_0/DOC/cart.txt#L105)
   to [512 KiB](https://github.com/atari800/atari800/blob/ATARI800_5_2_0/DOC/cart.txt#L108)
+- Atari 7800 (experimental, in this fork)
 - [Atari 8-bit](https://en.wikipedia.org/wiki/Atari_8-bit_family)
   - [DOS](https://en.wikipedia.org/wiki/Atari_DOS) ".XEX" file
   - Standard cartridge ([8 KiB](https://github.com/atari800/atari800/blob/ATARI800_5_2_0/DOC/cart.txt#L35)
@@ -155,6 +156,7 @@ executables and libraries for that target.
 | Atari 2600                      | 4K                 | `mos-atari2600-4k-clang`         |
 | Atari 2600                      | TigerVision 3E     | `mos-atari2600-3e-clang`         |
 | Atari 5200                      | Super Cart         | `mos-atari5200-supercart-clang`  |
+| Atari 7800                      | 32 KiB (experimental) | `mos-atari7800-clang`         |
 | Atari 8-bit                     | DOS                | `mos-atari8-dos-clang`           |
 | Atari 8-bit                     | MegaCart cartridge | `mos-atari8-cart-megacart-clang` |
 | Atari 8-bit                     | Standard cartridge | `mos-atari8-cart-std-clang`      |

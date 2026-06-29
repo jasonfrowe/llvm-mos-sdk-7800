@@ -1,0 +1,63 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 18,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "dev-bootstrap",
+      "displayName": "Dev (Bootstrap LLVM-MOS)",
+      "description": "Configures a host build and downloads a compatible LLVM-MOS toolchain if one is not already available.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/dev-bootstrap",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "MinSizeRel",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "LLVM_MOS_BOOTSTRAP_COMPILER": "ON",
+        "LLVM_MOS_BUILD_EXAMPLES": "ON"
+      }
+    },
+    {
+      "name": "dev-local",
+      "displayName": "Dev (Use Local LLVM-MOS)",
+      "description": "Configures a host build and uses an existing LLVM-MOS toolchain available on PATH.",
+      "inherits": "dev-bootstrap",
+      "binaryDir": "${sourceDir}/build/dev-local",
+      "cacheVariables": {
+        "LLVM_MOS_BOOTSTRAP_COMPILER": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "dev-bootstrap",
+      "displayName": "Build Dev (Bootstrap LLVM-MOS)",
+      "configurePreset": "dev-bootstrap"
+    },
+    {
+      "name": "dev-local",
+      "displayName": "Build Dev (Use Local LLVM-MOS)",
+      "configurePreset": "dev-local"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "dev-bootstrap",
+      "displayName": "Test Dev (Bootstrap LLVM-MOS)",
+      "configurePreset": "dev-bootstrap",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "dev-local",
+      "displayName": "Test Dev (Use Local LLVM-MOS)",
+      "configurePreset": "dev-local",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}
