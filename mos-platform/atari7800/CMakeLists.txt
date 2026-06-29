@@ -15,6 +15,8 @@ merge_libraries(atari7800-crt0
 )
 
 add_platform_library(atari7800-c
+  atari7800.c
+  getchar.c
   putchar.c
 )
 target_include_directories(atari7800-c BEFORE PUBLIC .)

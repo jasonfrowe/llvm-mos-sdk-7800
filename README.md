@@ -4,6 +4,8 @@ The LLVM-MOS compiler toolchain and platform libraries.
 
 [API Reference](https://llvm-mos.github.io/llvm-mos-sdk/files.html)
 
+Atari 7800 fork API draft: [docs/atari7800-api.md](docs/atari7800-api.md)
+
 ## Supported platforms
 
 - [Atari 2600](https://en.wikipedia.org/wiki/Atari_2600)

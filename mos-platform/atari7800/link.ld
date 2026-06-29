@@ -87,7 +87,19 @@ SECTIONS {
 
   .cart_rom_fixed : { *(.cart_rom_fixed .cart_rom_fixed.*) } >cart_rom
 
-  .vector 0xfffa : {
+  /*
+   * Reserve final 128 bytes for signature/verification data and vectors.
+   * This layout is compatible with 7800sign/sign7800 expectations.
+   */
+  .cart_footer 0xff80 : {
+    /* Signature area at 0xff80-0xfff7 (120 bytes). */
+    . = . + 120;
+
+    /* Region verification and encryption/hash config bytes. */
+    BYTE(0xff)
+    BYTE(0xf7)
+
+    /* CPU vectors. */
     SHORT(0)
     SHORT(_start)
     SHORT(0)

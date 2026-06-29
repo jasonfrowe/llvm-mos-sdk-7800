@@ -1,0 +1,7 @@
+add_executable(palette-demo.a78 palette-demo.c)
+target_compile_options(palette-demo.a78 PRIVATE "-Os")
+install_example(palette-demo.a78)
+
+add_executable(displaylist-demo.a78 displaylist-demo.c)
+target_compile_options(displaylist-demo.a78 PRIVATE "-Os")
+install_example(displaylist-demo.a78)
