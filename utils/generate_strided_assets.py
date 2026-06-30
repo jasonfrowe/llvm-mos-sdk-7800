@@ -49,11 +49,11 @@ def main():
     lines.append("")
     
     # Emit fighter sprite data
-    lines.append("/* Fighter Sprite Data (Strided layout) */")
+    lines.append("/* Fighter Sprite Data (Strided layout - vertically flipped for MARIA scanline countdown) */")
     lines.append("static const uint8_t fighter_sprite_data[] __attribute__((aligned(256))) = {")
     for y, row_bytes in enumerate(fighter_packed):
         row_str = ", ".join(f"0x{b:02x}" for b in row_bytes)
-        offset = y * 256
+        offset = (height - 1 - y) * 256
         lines.append(f"    [{offset}] = {row_str},")
     lines.append("};")
     lines.append("")
@@ -72,7 +72,7 @@ def main():
     lines.append("};")
     lines.append("")
     
-    # Emit font data (Strided layout: tile_height pages, each containing row y of all tiles)
+    # Emit font data (Strided layout: tile_height pages, flipped for MARIA scanline countdown)
     lines.append("/* Unified Font Data (Strided layout: 8 pages of 256 bytes) */")
     lines.append("static const uint8_t hud_font_data[] __attribute__((aligned(256))) = {")
     for y in range(tile_height):
@@ -81,9 +81,9 @@ def main():
         for t in range(tile_count):
             page_bytes.extend(packed_tiles[t][y])
         
-        # Output page y at offset y*256
-        offset = y * 256
-        lines.append(f"    /* Page {y} (offset {offset}) */")
+        # Output page y at offset (tile_height - 1 - y)*256
+        offset = (tile_height - 1 - y) * 256
+        lines.append(f"    /* Page {tile_height - 1 - y} (offset {offset}) */")
         first = True
         for i in range(0, len(page_bytes), 12):
             chunk = page_bytes[i : i + 12]

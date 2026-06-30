@@ -18,7 +18,8 @@ MEMORY {
 
   header   (r) : ORIGIN = 0x0000, LENGTH = 128
   cart_rom (rx) : ORIGIN = 0x8000, LENGTH = __cart_rom_size * 1024
-  ram (w)       : ORIGIN = 0x1800, LENGTH = 0x1000
+  ram_low (w)   : ORIGIN = 0x1800, LENGTH = 0x0840
+  ram (w)       : ORIGIN = 0x2200, LENGTH = 0x0600
 }
 
 /* Provide imaginary (zero page) registers. */
@@ -35,6 +36,14 @@ REGION_ALIAS("c_readonly", cart_rom)
 REGION_ALIAS("c_writeable", ram)
 
 SECTIONS {
+  .scene_zones_low 0x1a00 (NOLOAD) : {
+    *(.scene_zones_low .scene_zones_low.*)
+  } >ram_low
+
+  .scene_zones_high 0x2200 (NOLOAD) : {
+    *(.scene_zones_high .scene_zones_high.*)
+  } >ram
+
   INCLUDE c.ld
 
   /* 7800basic-compatible A78 header skeleton. */

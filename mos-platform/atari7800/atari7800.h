@@ -133,7 +133,7 @@ typedef struct atari7800_scene {
 #define ATARI7800_MARIA_ZONE5_OBJECT_BYTES 5u
 #define ATARI7800_MARIA_ZONE5_TERMINATOR_BYTES 2u
 #define ATARI7800_SCENE_VISIBLE_ZONES 28u
-#define ATARI7800_SCENE_ZONE_BYTES 32u
+#define ATARI7800_SCENE_ZONE_BYTES 64u
 
 static inline uint16_t atari7800_ptr16(const void *ptr) {
 	return (uint16_t)(uintptr_t)ptr;
