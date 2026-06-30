@@ -9,3 +9,7 @@ install_example(displaylist-demo.a78)
 add_executable(asset-bridge-demo.a78 asset-bridge-demo.c)
 target_compile_options(asset-bridge-demo.a78 PRIVATE "-Os")
 install_example(asset-bridge-demo.a78)
+
+add_executable(astrowing.a78 astrowing/astrowing.c)
+target_compile_options(astrowing.a78 PRIVATE "-Os")
+install_example(astrowing.a78)

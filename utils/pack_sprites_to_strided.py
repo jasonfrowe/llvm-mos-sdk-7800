@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Convert an indexed-color PNG to 160A 2bpp row bytes header.
+"""Pack multiple indexed-color PNGs into a single MARIA-strided sprite sheet.
 
-Output format packs 4 pixels per byte: p0..p3 -> bits 7..0 as 2bpp indices.
+Usage:
+  python3 pack_sprites_to_strided.py --output assets/spaceship.h --symbol spaceship --width 16 --height 16 input1.png input2.png ...
 """
 
 import argparse
@@ -27,7 +28,7 @@ def paeth(a: int, b: int, c: int) -> int:
 def parse_png(path: Path):
     data = path.read_bytes()
     if not data.startswith(PNG_SIG):
-        raise ValueError("not a PNG file")
+        raise ValueError(f"{path.name} is not a PNG file")
 
     pos = len(PNG_SIG)
     width = height = bit_depth = color_type = None
@@ -131,69 +132,93 @@ def pack_160a(indices):
     return packed
 
 
-def emit_header(out_path: Path, symbol: str, width: int, height: int, packed_rows):
-    width_bytes = len(packed_rows[0]) if packed_rows else 0
-    width_twos_comp = (0x20 - width_bytes) & 0xFF
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--symbol", required=True)
+    parser.add_argument("--width", type=int, required=True)
+    parser.add_argument("--height", type=int, required=True)
+    parser.add_argument("input_pngs", nargs="+")
+    args = parser.parse_args()
 
+    width_bytes = (args.width + 3) // 4
+    num_frames = len(args.input_pngs)
+    total_span_bytes = args.height * 256
+
+    # Verify input dimensions and convert rows to 160A packed bytes
+    # converted_frames[f][y] -> list of width_bytes bytes
+    converted_frames = []
+    for path_str in args.input_pngs:
+        path = Path(path_str)
+        w, h, bit_depth, rows = parse_png(path)
+        if w != args.width or h != args.height:
+            raise ValueError(f"Image {path.name} must be {args.width}x{args.height}")
+
+        frame_rows = []
+        for row in rows:
+            indices = row_indices(row, w, bit_depth)
+            frame_rows.append(pack_160a(indices))
+        converted_frames.append(frame_rows)
+
+    # Construct the strided, vertically-flipped array.
+    # scanline y (0 = top, H-1 = bottom) is stored at page (H - 1 - y)
+    # Inside each page, frame f is stored at offset (f * width_bytes)
+    total_span_bytes = (args.height + 8) * 256
+    out_bytes = [0] * total_span_bytes
+    for f in range(num_frames):
+        for y in range(args.height):
+            page_index = args.height - 1 - y
+            page_start = page_index * 256
+            frame_offset = f * width_bytes
+            for b_idx in range(width_bytes):
+                out_bytes[page_start + frame_offset + b_idx] = converted_frames[f][y][b_idx]
+
+    # Write output header
     lines = []
-    lines.append(f"#ifndef ATARI7800_ASSET_{symbol.upper()}_H")
-    lines.append(f"#define ATARI7800_ASSET_{symbol.upper()}_H")
+    symbol_upper = args.symbol.upper()
+    lines.append(f"#ifndef ATARI7800_ASSET_{symbol_upper}_H")
+    lines.append(f"#define ATARI7800_ASSET_{symbol_upper}_H")
     lines.append("")
     lines.append("#include <stdint.h>")
     lines.append("#include <atari7800.h>")
     lines.append("")
-    lines.append(f"#define {symbol.upper()}_WIDTH_PIXELS {width}u")
-    lines.append(f"#define {symbol.upper()}_HEIGHT_LINES {height}u")
-    lines.append(f"#define {symbol.upper()}_WIDTH_BYTES {width_bytes}u")
-    lines.append(f"#define {symbol.upper()}_WIDTH_TWOS_COMP 0x{width_twos_comp:02x}u")
-    lines.append(f"#define {symbol.upper()}_MODE 0x40u")
-    lines.append(f"#define {symbol.upper()}_DEFAULT_PALETTE 3u")
-    lines.append(
-        f"#define {symbol.upper()}_DATA_LAYOUT ATARI7800_SPRITE_LAYOUT_CONTIGUOUS_160A"
-    )
+    lines.append(f"#define {symbol_upper}_WIDTH_PIXELS {args.width}u")
+    lines.append(f"#define {symbol_upper}_HEIGHT_LINES {args.height}u")
+    lines.append(f"#define {symbol_upper}_WIDTH_BYTES {width_bytes}u")
+    lines.append(f"#define {symbol_upper}_WIDTH_TWOS_COMP 0x{(0x20 - width_bytes) & 0xFF:02x}u")
+    lines.append(f"#define {symbol_upper}_MODE 0x40u")
+    lines.append(f"#define {symbol_upper}_DEFAULT_PALETTE 3u")
+    lines.append(f"#define {symbol_upper}_DATA_LAYOUT ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED")
+    lines.append(f"#define {symbol_upper}_NUM_FRAMES {num_frames}u")
     lines.append("")
-    lines.append(f"static const uint8_t {symbol}[] = {{")
+    lines.append(f"static const uint8_t {args.symbol}_data[] __attribute__((aligned(256))) = {{")
 
-    flat = [b for row in packed_rows for b in row]
-    for i in range(0, len(flat), 12):
-        chunk = ", ".join(f"0x{v:02x}" for v in flat[i : i + 12])
+    # Only output up to the last written byte of the last page to save ROM size
+    last_useful_byte = (args.height + 8 - 1) * 256 + num_frames * width_bytes
+    for i in range(0, last_useful_byte, 12):
+        chunk = ", ".join(f"0x{v:02x}" for v in out_bytes[i : i + 12])
         lines.append(f"    {chunk},")
     lines.append("};")
     lines.append("")
-    lines.append(f"static const uint16_t {symbol}_len = {len(flat)}u;")
-    lines.append("")
-    lines.append(
-        f"static const atari7800_sprite_asset_t {symbol}_asset = {{"
-    )
-    lines.append(f"    .data = {symbol},")
-    lines.append(f"    .width_bytes = {symbol.upper()}_WIDTH_BYTES,")
-    lines.append(f"    .height_lines = {symbol.upper()}_HEIGHT_LINES,")
-    lines.append(f"    .mode = {symbol.upper()}_MODE,")
-    lines.append(f"    .palette = {symbol.upper()}_DEFAULT_PALETTE,")
-    lines.append(f"    .width_twos_comp = {symbol.upper()}_WIDTH_TWOS_COMP,")
-    lines.append(f"    .data_layout = {symbol.upper()}_DATA_LAYOUT,")
+
+    # Emit the array of sprite assets pointing to the frames
+    lines.append(f"static const atari7800_sprite_asset_t {args.symbol}_frames[{num_frames}] = {{")
+    for f in range(num_frames):
+        lines.append("  {")
+        lines.append(f"    .data = &{args.symbol}_data[{f * width_bytes}u],")
+        lines.append(f"    .width_bytes = {symbol_upper}_WIDTH_BYTES,")
+        lines.append(f"    .height_lines = {symbol_upper}_HEIGHT_LINES,")
+        lines.append(f"    .mode = {symbol_upper}_MODE,")
+        lines.append(f"    .palette = {symbol_upper}_DEFAULT_PALETTE,")
+        lines.append(f"    .width_twos_comp = {symbol_upper}_WIDTH_TWOS_COMP,")
+        lines.append(f"    .data_layout = {symbol_upper}_DATA_LAYOUT,")
+        lines.append("  },")
     lines.append("};")
     lines.append("")
     lines.append("#endif")
     lines.append("")
 
-    out_path.write_text("\n".join(lines), encoding="ascii")
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("input_png")
-    parser.add_argument("output_header")
-    parser.add_argument("symbol")
-    args = parser.parse_args()
-
-    width, height, bit_depth, rows = parse_png(Path(args.input_png))
-    packed_rows = []
-    for row in rows:
-        idx = row_indices(row, width, bit_depth)
-        packed_rows.append(pack_160a(idx))
-
-    emit_header(Path(args.output_header), args.symbol, width, height, packed_rows)
+    Path(args.output).write_text("\n".join(lines), encoding="ascii")
 
 
 if __name__ == "__main__":

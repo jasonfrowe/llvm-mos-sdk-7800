@@ -223,6 +223,7 @@ void atari7800_scene_init_160a(atari7800_scene_t *scene, uint8_t bgcolor) {
   }
 
   atari7800_scene_begin_frame(scene);
+  scene->initialized = 1u;
   atari7800_init_160a(atari7800_ptr16(atari7800_scene_display_list), bgcolor);
 }
 
