@@ -29,6 +29,7 @@ ASSERT(__rc31 == 0x9f, "Inconsistent zero page map.")
 /* Provide default interrupt handlers if the program does not define them. */
 PROVIDE(nmi = _atari7800_irq_default);
 PROVIDE(irq = _atari7800_irq_default);
+PROVIDE(atari7800_reset_entry = _start);
 
 REGION_ALIAS("c_readonly", cart_rom)
 REGION_ALIAS("c_writeable", ram)
@@ -92,6 +93,14 @@ SECTIONS {
   .cart_rom_fixed : { *(.cart_rom_fixed .cart_rom_fixed.*) } >cart_rom
 
   /*
+   * Place reset entry trampoline in high ROM so 7800sign can hash/sign carts.
+   * The trampoline jumps to the regular C runtime _start.
+   */
+  .cart_rom_reset_entry 0xf000 : {
+    KEEP(*(.cart_rom_reset_entry .cart_rom_reset_entry.*))
+  } >cart_rom
+
+  /*
    * Reserve final 128 bytes for signature/verification data and vectors.
    * This layout is compatible with 7800sign/sign7800 expectations.
    */
@@ -105,7 +114,7 @@ SECTIONS {
 
     /* CPU vectors. */
     SHORT(nmi)
-    SHORT(_start)
+    SHORT(atari7800_reset_entry)
     SHORT(irq)
   } >cart_rom
 }

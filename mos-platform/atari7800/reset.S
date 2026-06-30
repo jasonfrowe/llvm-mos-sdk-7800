@@ -1,5 +1,11 @@
 ; Atari 7800 startup and default interrupt handlers.
 
+; Reset trampoline located in high ROM so 7800sign can hash/sign carts.
+.global atari7800_reset_entry
+.section .cart_rom_reset_entry,"axR",@progbits
+atari7800_reset_entry:
+  jmp _start
+
 ; Run very early during _start.
 .global __do_7800_reset
 .section .init.50,"ax",@progbits
