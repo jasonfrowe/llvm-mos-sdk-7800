@@ -163,11 +163,11 @@ def main():
     # Construct the strided, vertically-flipped array.
     # scanline y (0 = top, H-1 = bottom) is stored at page (H - 1 - y)
     # Inside each page, frame f is stored at offset (f * width_bytes)
-    total_span_bytes = (args.height + 8) * 256
+    total_span_bytes = (args.height + 32) * 256
     out_bytes = [0] * total_span_bytes
     for f in range(num_frames):
         for y in range(args.height):
-            page_index = args.height - 1 - y
+            page_index = 16 + (args.height - 1 - y)
             page_start = page_index * 256
             frame_offset = f * width_bytes
             for b_idx in range(width_bytes):
@@ -194,7 +194,7 @@ def main():
     lines.append(f"static const uint8_t {args.symbol}_data[] __attribute__((aligned(256))) = {{")
 
     # Only output up to the last written byte of the last page to save ROM size
-    last_useful_byte = (args.height + 8 - 1) * 256 + num_frames * width_bytes
+    last_useful_byte = (args.height + 32 - 1) * 256 + num_frames * width_bytes
     for i in range(0, last_useful_byte, 12):
         chunk = ", ".join(f"0x{v:02x}" for v in out_bytes[i : i + 12])
         lines.append(f"    {chunk},")
@@ -205,7 +205,7 @@ def main():
     lines.append(f"static const atari7800_sprite_asset_t {args.symbol}_frames[{num_frames}] = {{")
     for f in range(num_frames):
         lines.append("  {")
-        lines.append(f"    .data = &{args.symbol}_data[{f * width_bytes}u],")
+        lines.append(f"    .data = &{args.symbol}_data[{f * width_bytes + 16 * 256}u],")
         lines.append(f"    .width_bytes = {symbol_upper}_WIDTH_BYTES,")
         lines.append(f"    .height_lines = {symbol_upper}_HEIGHT_LINES,")
         lines.append(f"    .mode = {symbol_upper}_MODE,")

@@ -6,25 +6,25 @@
 /* Include HUD font */
 #include "../assets/fighter.sprite.h"
 
-/* Aligned 16-bit sine/cosine tables for ship physics */
+/* Aligned 8-bit sine/cosine tables from astrowing.bas */
 static const int16_t sin_table[16] = {
-  0, 8, 12, 16, 16, 16, 12, 8, 0, -8, -12, -16, -16, -16, -12, -8
+  0, 2, 3, 4, 4, 4, 3, 2, 0, -2, -3, -4, -4, -4, -3, -2
 };
 
 static const int16_t cos_table[16] = {
-  24, 24, 16, 8, 0, -8, -16, -24, -24, -24, -16, -8, 0, 8, 16, 24
+  6, 6, 4, 2, 0, -2, -4, -6, -6, -6, -4, -2, 0, 2, 4, 6
 };
 
-/* Page-aligned 1-pixel star sprite (8 pages data + 8 pages padding) */
+/* Page-aligned 1-pixel star sprite (16 pages data + 16 pages padding = 32 pages) */
 static const uint8_t star_sprite_data[] __attribute__((aligned(256))) = {
-  [1792] = 0x40, /* Row 0 of Page 7 contains the pixel */
-  [3839] = 0x00  /* Pad up to 15 pages (3840 bytes) to allow up to 7 scanlines shift */
+  [3840] = 0x40, /* Row 0 of Page 15 contains the pixel */
+  [8191] = 0x00  /* Pad up to 32 pages */
 };
 
 static const atari7800_sprite_asset_t star_sprite = {
   .data = star_sprite_data,
   .width_bytes = 1u,
-  .height_lines = 8u,
+  .height_lines = 16u, /* 16 scanlines high for 16-line zone */
   .mode = 0x40u,
   .palette = 4u,
   .width_twos_comp = 0x1fu,
@@ -42,11 +42,16 @@ static star_t stars[4];
 static uint8_t cycle_state = 0;
 static uint16_t frame_count = 0;
 
-/* Player spaceship state */
-static int16_t player_vx = 0;
-static int16_t player_vy = 0;
-static int16_t sub_x = 0;
-static int16_t sub_y = 0;
+/* Player spaceship state (exact dual-velocity structure from basic source) */
+static uint8_t vx_p = 0;
+static uint8_t vx_m = 0;
+static uint8_t vy_p = 0;
+static uint8_t vy_m = 0;
+static uint8_t rx = 0;
+static uint8_t ry = 0;
+static uint8_t acc_mx = 0;
+static uint8_t acc_my = 0;
+
 static uint8_t angle = 0;
 static uint8_t rot_timer = 0;
 
@@ -96,59 +101,83 @@ void update_player_input(void) {
   }
 
   if (!(ATARI7800_SWCHA & ATARI7800_SWCHA_UP)) {
-    player_vx += sin_table[angle];
-    player_vy -= cos_table[angle];
+    int16_t temp_acc;
 
-    int16_t max_speed = 480;
-    if (player_vx > max_speed) player_vx = max_speed;
-    if (player_vx < -max_speed) player_vx = -max_speed;
-    if (player_vy > max_speed) player_vy = max_speed;
-    if (player_vy < -max_speed) player_vy = -max_speed;
+    /* X Axis */
+    temp_acc = sin_table[angle];
+    if (temp_acc >= 0) {
+      uint16_t new_val = (uint16_t)vx_p + temp_acc;
+      vx_p = (new_val > 120) ? 120 : (uint8_t)new_val;
+    } else {
+      uint16_t new_val = (uint16_t)vx_m - temp_acc;
+      vx_m = (new_val > 120) ? 120 : (uint8_t)new_val;
+    }
+
+    /* Y Axis (Inverted: subtract Cos) */
+    temp_acc = cos_table[angle];
+    if (temp_acc >= 0) {
+      uint16_t new_val = (uint16_t)vy_m + temp_acc;
+      vy_m = (new_val > 120) ? 120 : (uint8_t)new_val;
+    } else {
+      uint16_t new_val = (uint16_t)vy_p - temp_acc;
+      vy_p = (new_val > 120) ? 120 : (uint8_t)new_val;
+    }
+  }
+}
+
+void neutralize_forces(void) {
+  uint8_t common;
+
+  /* X Axis */
+  if (vx_p > 0 && vx_m > 0) {
+    common = (vx_p < vx_m) ? vx_p : vx_m;
+    vx_p -= common;
+    vx_m -= common;
+  }
+
+  /* Y Axis */
+  if (vy_p > 0 && vy_m > 0) {
+    common = (vy_p < vy_m) ? vy_p : vy_m;
+    vy_p -= common;
+    vy_m -= common;
   }
 }
 
 void apply_friction(void) {
-  if (player_vx > 8) player_vx -= 4;
-  else if (player_vx < -8) player_vx += 4;
-  else player_vx = 0;
-
-  if (player_vy > 8) player_vy -= 4;
-  else if (player_vy < -8) player_vy += 4;
-  else player_vy = 0;
+  if (vx_p < 2) vx_p = 0; else vx_p -= 1;
+  if (vx_m < 2) vx_m = 0; else vx_m -= 1;
+  if (vy_p < 2) vy_p = 0; else vy_p -= 1;
+  if (vy_m < 2) vy_m = 0; else vy_m -= 1;
 }
 
 void update_scrolling(void) {
   scroll_x = 0;
   scroll_y = 0;
 
-  sub_x += player_vx;
-  if (sub_x >= 512) {
-    scroll_x = 2;
-    sub_x -= 512;
-  } else if (sub_x >= 256) {
-    scroll_x = 1;
-    sub_x -= 256;
-  } else if (sub_x <= -512) {
-    scroll_x = -2;
-    sub_x += 512;
-  } else if (sub_x <= -256) {
-    scroll_x = -1;
-    sub_x += 256;
+  /* X Axis scroll accumulation (div-by-64) */
+  if (vx_p > 0) {
+    uint16_t temp_v = (uint16_t)vx_p + rx;
+    rx = (uint8_t)(temp_v & 63u);
+    uint8_t temp_w = (uint8_t)(temp_v >> 6);
+    if (temp_w > 0) scroll_x = (int8_t)temp_w;
+  } else if (vx_m > 0) {
+    uint16_t temp_v = (uint16_t)vx_m + acc_mx;
+    acc_mx = (uint8_t)(temp_v & 63u);
+    uint8_t temp_w = (uint8_t)(temp_v >> 6);
+    if (temp_w > 0) scroll_x = -(int8_t)temp_w;
   }
 
-  sub_y += player_vy;
-  if (sub_y >= 512) {
-    scroll_y = 2;
-    sub_y -= 512;
-  } else if (sub_y >= 256) {
-    scroll_y = 1;
-    sub_y -= 256;
-  } else if (sub_y <= -512) {
-    scroll_y = -2;
-    sub_y += 512;
-  } else if (sub_y <= -256) {
-    scroll_y = -1;
-    sub_y += 256;
+  /* Y Axis scroll accumulation (div-by-64) */
+  if (vy_p > 0) {
+    uint16_t temp_v = (uint16_t)vy_p + ry;
+    ry = (uint8_t)(temp_v & 63u);
+    uint8_t temp_w = (uint8_t)(temp_v >> 6);
+    if (temp_w > 0) scroll_y = (int8_t)temp_w;
+  } else if (vy_m > 0) {
+    uint16_t temp_v = (uint16_t)vy_m + acc_my;
+    acc_my = (uint8_t)(temp_v & 63u);
+    uint8_t temp_w = (uint8_t)(temp_v >> 6);
+    if (temp_w > 0) scroll_y = -(int8_t)temp_w;
   }
 }
 
@@ -165,20 +194,11 @@ void shift_stars(void) {
   }
 }
 
-/* Draws a sprite with pixel-fine vertical positioning inside the zone */
-void draw_sprite_fine(const atari7800_sprite_asset_t *asset, uint8_t x, uint8_t y) {
-  uint8_t y_offset = y & 7;
-  atari7800_sprite_asset_t shifted_asset = *asset;
-  shifted_asset.data = (const uint8_t *)((uintptr_t)shifted_asset.data + ((uint16_t)y_offset << 8));
-  
-  atari7800_scene_draw_sprite(&scene, &shifted_asset, x, y);
-}
-
 int main(void) {
   uint8_t i;
 
-  /* Initialize system with background color */
-  atari7800_scene_init_160a(&scene, ATARI7800_BG_DARKGRAY);
+  /* Initialize system using 16-line zone height */
+  atari7800_scene_init_160a_ex(&scene, ATARI7800_BG_DARKGRAY, 16);
 
   /* Set Palettes */
   atari7800_scene_set_palette(&scene, 0, (atari7800_palette3_t){0x26, 0x24, 0x04}); /* UI */
@@ -195,6 +215,7 @@ int main(void) {
     frame_count++;
 
     update_player_input();
+    neutralize_forces();
     apply_friction();
     update_scrolling();
     shift_stars();
@@ -205,24 +226,16 @@ int main(void) {
     /* Render stars (clipping to gameplay area Y >= 16 to keep HUD zone clean) */
     for (i = 0; i < 4; ++i) {
       if (stars[i].y >= 16) {
-        draw_sprite_fine(&star_sprite, stars[i].x, stars[i].y);
+        atari7800_scene_draw_sprite_fine(&scene, &star_sprite, stars[i].x, stars[i].y);
       }
     }
 
-    /* Draw player spaceship (16 lines high, split into two 8-line zones) */
-    atari7800_sprite_asset_t top_half = spaceship_frames[angle];
-    top_half.height_lines = 8;
-    top_half.palette = 5; /* Use Palette 5 (Spaceship) */
-    top_half.data = (const uint8_t *)((uintptr_t)top_half.data + 8 * 256);
+    /* Draw player spaceship (16 lines high, split dynamically across 16-line zones) */
+    atari7800_sprite_asset_t player_ship = spaceship_frames[angle];
+    player_ship.palette = 5; /* Use Palette 5 (Spaceship) */
+    atari7800_scene_draw_sprite_16(&scene, &player_ship, 72, 90);
 
-    atari7800_sprite_asset_t bottom_half = spaceship_frames[angle];
-    bottom_half.height_lines = 8;
-    bottom_half.palette = 5; /* Use Palette 5 (Spaceship) */
-
-    draw_sprite_fine(&top_half, 72, 90);
-    draw_sprite_fine(&bottom_half, 72, 90 + 8);
-
-    /* Draw HUD text */
+    /* Draw HUD text (fits cleanly in 16-line zone) */
     atari7800_scene_draw_text(&scene, &hud_font, 4, 8, "SHLD:100 L:3");
 
     atari7800_scene_end_frame(&scene);

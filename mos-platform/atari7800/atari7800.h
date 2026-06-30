@@ -133,6 +133,11 @@ typedef struct atari7800_scene {
 	uint16_t zone_size;
 	uint8_t next_object;
 	uint8_t initialized;
+	uint8_t zone_height;
+	uint8_t zone_shift;
+	uint8_t zone_mask;
+	uint8_t visible_zones;
+	uint8_t zone_offset;
 } atari7800_scene_t;
 
 #define ATARI7800_MARIA_ZONE5_OBJECT_BYTES 5u
@@ -189,11 +194,18 @@ uint8_t atari7800_maria_plot_sprite_asset_zone5(uint8_t *zone,
 		uint16_t zone_size, uint8_t object_index,
 		const atari7800_sprite_asset_t *asset, uint8_t x_pos);
 void atari7800_scene_init_160a(atari7800_scene_t *scene, uint8_t bgcolor);
+void atari7800_scene_init_160a_ex(atari7800_scene_t *scene, uint8_t bgcolor, uint8_t zone_height);
 void atari7800_scene_set_palette(atari7800_scene_t *scene,
 		uint8_t palette_index, atari7800_palette3_t colors);
 void atari7800_scene_begin_frame(atari7800_scene_t *scene);
 void atari7800_scene_end_frame(atari7800_scene_t *scene);
 uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
+		const atari7800_sprite_asset_t *asset, uint8_t x_pos,
+		uint8_t y_pos);
+uint8_t atari7800_scene_draw_sprite_fine(atari7800_scene_t *scene,
+		const atari7800_sprite_asset_t *asset, uint8_t x_pos,
+		uint8_t y_pos);
+uint8_t atari7800_scene_draw_sprite_16(atari7800_scene_t *scene,
 		const atari7800_sprite_asset_t *asset, uint8_t x_pos,
 		uint8_t y_pos);
 uint8_t atari7800_scene_draw_text(atari7800_scene_t *scene,
