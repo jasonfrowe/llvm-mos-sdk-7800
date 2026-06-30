@@ -69,6 +69,7 @@
 #define ATARI7800_CTRL_MODE_320B 0x02u
 #define ATARI7800_CTRL_MODE_320C 0x03u
 #define ATARI7800_CTRL_DMA_ENABLE 0x40u
+#define ATARI7800_BG_DARKGRAY 0x02u
 
 /* Stable NTSC blank-frame layout (1 top + 28 display + 4 bottom). */
 #define ATARI7800_MARIA_NTSC_DLL_ENTRIES 33u
@@ -107,11 +108,16 @@ typedef struct atari7800_sprite_asset {
 } atari7800_sprite_asset_t;
 
 typedef struct atari7800_font_descriptor {
-	const atari7800_sprite_asset_t *glyphs;
+	const uint8_t *data;
 	const uint8_t *char_to_glyph;
 	uint8_t char_to_glyph_len;
 	uint8_t first_char;
 	uint8_t glyph_count;
+	uint8_t glyph_width_bytes;
+	uint8_t glyph_height_lines;
+	uint8_t glyph_mode;
+	uint8_t glyph_palette;
+	uint8_t glyph_width_twos_comp;
 	uint8_t glyph_advance;
 	uint8_t space_advance;
 	uint8_t line_advance;
