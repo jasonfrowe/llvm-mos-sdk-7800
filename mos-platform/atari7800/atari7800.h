@@ -87,6 +87,37 @@ typedef struct __attribute__((packed)) atari7800_maria_null_header {
 	uint8_t zero;
 } atari7800_maria_null_header_t;
 
+typedef struct __attribute__((packed)) atari7800_palette3 {
+	uint8_t c1;
+	uint8_t c2;
+	uint8_t c3;
+} atari7800_palette3_t;
+
+#define ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED 0u
+#define ATARI7800_SPRITE_LAYOUT_CONTIGUOUS_160A 1u
+
+typedef struct atari7800_sprite_asset {
+	const uint8_t *data;
+	uint8_t width_bytes;
+	uint8_t height_lines;
+	uint8_t mode;
+	uint8_t palette;
+	uint8_t width_twos_comp;
+	uint8_t data_layout;
+} atari7800_sprite_asset_t;
+
+typedef struct atari7800_scene {
+	uint8_t *zone;
+	uint16_t zone_size;
+	uint8_t next_object;
+	uint8_t initialized;
+} atari7800_scene_t;
+
+#define ATARI7800_MARIA_ZONE5_OBJECT_BYTES 5u
+#define ATARI7800_MARIA_ZONE5_TERMINATOR_BYTES 2u
+#define ATARI7800_SCENE_VISIBLE_ZONES 28u
+#define ATARI7800_SCENE_ZONE_BYTES 32u
+
 static inline uint16_t atari7800_ptr16(const void *ptr) {
 	return (uint16_t)(uintptr_t)ptr;
 }
@@ -115,10 +146,76 @@ static inline void atari7800_wait_hsync(void) {
 	ATARI7800_WSYNC = 0;
 }
 
+/* Equivalent to the palette bits used by 7800basic plotsprite pal|width byte. */
+static inline uint8_t atari7800_maria_pal_width(uint8_t palette,
+		uint8_t width_twos_comp) {
+	return (uint8_t)(((palette & 0x07u) << 5) | (width_twos_comp & 0x1fu));
+}
+
 void atari7800_init_system(void);
 void atari7800_wait_vblank(void);
 void atari7800_configure_video(uint16_t display_list_addr, uint8_t ctrl, uint8_t bgcolor);
+void atari7800_init_160a(uint16_t display_list_addr, uint8_t bgcolor);
 void atari7800_maria_build_blank_ntsc(atari7800_maria_dll_entry_t *display_list,
 		const atari7800_maria_null_header_t *zone_header);
+void atari7800_maria_build_ntsc_single_zone(atari7800_maria_dll_entry_t *display_list,
+		const atari7800_maria_null_header_t *null_zone_header,
+		uint8_t visible_zone_index, const void *visible_zone_header);
+void atari7800_set_palette3(uint8_t palette_index, atari7800_palette3_t colors);
+void atari7800_maria_build_sprite_zone5(uint8_t *zone,
+		uint16_t sprite_addr, uint8_t mode, uint8_t palette,
+		uint8_t width_twos_comp, uint8_t x_pos);
+void atari7800_maria_clear_zone(uint8_t *zone, uint16_t zone_size);
+uint8_t atari7800_maria_plot_sprite_zone5(uint8_t *zone, uint16_t zone_size,
+		uint8_t object_index, uint16_t sprite_addr, uint8_t mode,
+		uint8_t palette, uint8_t width_twos_comp, uint8_t x_pos);
+uint8_t atari7800_maria_plot_sprite_asset_zone5(uint8_t *zone,
+		uint16_t zone_size, uint8_t object_index,
+		const atari7800_sprite_asset_t *asset, uint8_t x_pos);
+void atari7800_scene_init_160a(atari7800_scene_t *scene, uint8_t bgcolor);
+void atari7800_scene_set_palette(atari7800_scene_t *scene,
+		uint8_t palette_index, atari7800_palette3_t colors);
+void atari7800_scene_begin_frame(atari7800_scene_t *scene);
+void atari7800_scene_end_frame(atari7800_scene_t *scene);
+void atari7800_scene_begin(atari7800_scene_t *scene, uint8_t *zone,
+		uint16_t zone_size);
+uint8_t atari7800_scene_plotsprite(atari7800_scene_t *scene,
+		const void *sprite_data, uint8_t mode, uint8_t palette,
+		uint8_t width_twos_comp, uint8_t x_pos);
+uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
+		const atari7800_sprite_asset_t *asset, uint8_t x_pos,
+		uint8_t y_pos);
+uint8_t atari7800_scene_plotchars(atari7800_scene_t *scene,
+		const void *char_data, uint8_t mode, uint8_t palette,
+		uint8_t width_twos_comp, uint8_t x_pos);
+
+/* 7800basic-style convenience wrappers. */
+static inline void atari7800_clearscreen(uint8_t *zone, uint16_t zone_size) {
+	atari7800_maria_clear_zone(zone, zone_size);
+}
+
+static inline uint8_t atari7800_plotsprite(
+		uint8_t *zone, uint16_t zone_size, uint8_t object_index,
+		const void *sprite_data, uint8_t mode, uint8_t palette,
+		uint8_t width_twos_comp, uint8_t x_pos) {
+	return atari7800_maria_plot_sprite_zone5(zone, zone_size, object_index,
+			atari7800_ptr16(sprite_data), mode, palette, width_twos_comp, x_pos);
+}
+
+static inline uint8_t atari7800_plotsprite_asset(
+		uint8_t *zone, uint16_t zone_size, uint8_t object_index,
+		const atari7800_sprite_asset_t *asset, uint8_t x_pos) {
+	return atari7800_maria_plot_sprite_asset_zone5(zone, zone_size,
+			object_index, asset, x_pos);
+}
+
+/* Current plotchars helper maps to the same 5-byte MARIA object format. */
+static inline uint8_t atari7800_plotchars(
+		uint8_t *zone, uint16_t zone_size, uint8_t object_index,
+		const void *char_data, uint8_t mode, uint8_t palette,
+		uint8_t width_twos_comp, uint8_t x_pos) {
+	return atari7800_plotsprite(zone, zone_size, object_index, char_data,
+			mode, palette, width_twos_comp, x_pos);
+}
 
 #endif

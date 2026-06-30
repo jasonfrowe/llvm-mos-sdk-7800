@@ -140,11 +140,17 @@ def emit_header(out_path: Path, symbol: str, width: int, height: int, packed_row
     lines.append("#define ASTROWING_FIGHTER_160A_H")
     lines.append("")
     lines.append("#include <stdint.h>")
+    lines.append("#include <atari7800.h>")
     lines.append("")
     lines.append(f"#define {symbol.upper()}_WIDTH_PIXELS {width}u")
     lines.append(f"#define {symbol.upper()}_HEIGHT_LINES {height}u")
     lines.append(f"#define {symbol.upper()}_WIDTH_BYTES {width_bytes}u")
     lines.append(f"#define {symbol.upper()}_WIDTH_TWOS_COMP 0x{width_twos_comp:02x}u")
+    lines.append(f"#define {symbol.upper()}_MODE 0x40u")
+    lines.append(f"#define {symbol.upper()}_DEFAULT_PALETTE 3u")
+    lines.append(
+        f"#define {symbol.upper()}_DATA_LAYOUT ATARI7800_SPRITE_LAYOUT_CONTIGUOUS_160A"
+    )
     lines.append("")
     lines.append(f"static const uint8_t {symbol}[] = {{")
 
@@ -155,6 +161,18 @@ def emit_header(out_path: Path, symbol: str, width: int, height: int, packed_row
     lines.append("};")
     lines.append("")
     lines.append(f"static const uint16_t {symbol}_len = {len(flat)}u;")
+    lines.append("")
+    lines.append(
+        f"static const atari7800_sprite_asset_t {symbol}_asset = {{"
+    )
+    lines.append(f"    .data = {symbol},")
+    lines.append(f"    .width_bytes = {symbol.upper()}_WIDTH_BYTES,")
+    lines.append(f"    .height_lines = {symbol.upper()}_HEIGHT_LINES,")
+    lines.append(f"    .mode = {symbol.upper()}_MODE,")
+    lines.append(f"    .palette = {symbol.upper()}_DEFAULT_PALETTE,")
+    lines.append(f"    .width_twos_comp = {symbol.upper()}_WIDTH_TWOS_COMP,")
+    lines.append(f"    .data_layout = {symbol.upper()}_DATA_LAYOUT,")
+    lines.append("};")
     lines.append("")
     lines.append("#endif")
     lines.append("")
