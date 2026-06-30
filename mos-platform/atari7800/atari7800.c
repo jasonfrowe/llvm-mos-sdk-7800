@@ -1,13 +1,19 @@
 #include <atari7800.h>
 
+/* Null zone display list header used to terminate empty zones. */
 static atari7800_maria_null_header_t atari7800_scene_null_zone;
+
+/* The Display List List (DLL) pointing to all zones on the screen. */
 static atari7800_maria_dll_entry_t
     atari7800_scene_display_list[ATARI7800_MARIA_NTSC_DLL_ENTRIES];
+
+/* Low-RAM and High-RAM display list zone buffers split to bypass physical memory shadow pages. */
 static uint8_t atari7800_scene_zones_low[14][ATARI7800_SCENE_ZONE_BYTES]
     __attribute__((section(".scene_zones_low")));
 static uint8_t atari7800_scene_zones_high[14][ATARI7800_SCENE_ZONE_BYTES]
     __attribute__((section(".scene_zones_high")));
 
+/* Read-only lookup table to access zone pointers by index (0-27). */
 static uint8_t * const atari7800_scene_zones[ATARI7800_SCENE_VISIBLE_ZONES] = {
   &atari7800_scene_zones_low[0][0],
   &atari7800_scene_zones_low[1][0],
@@ -39,10 +45,20 @@ static uint8_t * const atari7800_scene_zones[ATARI7800_SCENE_VISIBLE_ZONES] = {
   &atari7800_scene_zones_high[13][0],
 };
 
+/* Tracker for the next available object slot index (0-12) inside each zone display list. */
 static uint8_t atari7800_scene_zone_next_object[ATARI7800_SCENE_VISIBLE_ZONES];
+
+/* Tracker for active zones in the previous frame, used to identify and clean up inactive zones. */
 static uint8_t atari7800_scene_active_zones_prev[ATARI7800_SCENE_VISIBLE_ZONES];
+
+/* Tracker for active zones in the current frame. */
 static uint8_t atari7800_scene_active_zones_curr[ATARI7800_SCENE_VISIBLE_ZONES];
 
+/**
+ * Initializes the baseline hardware configuration of the Atari 7800.
+ * Locks the console in 7800 mode, turns off DMA during initial setup,
+ * and clears screen offsets.
+ */
 void atari7800_init_system(void) {
   ATARI7800_INPTCTRL = 0x07;
   ATARI7800_CTRL = 0x7f;
@@ -50,6 +66,10 @@ void atari7800_init_system(void) {
   ATARI7800_INPTCTRL = 0x00;
 }
 
+/**
+ * Waits for the start of the next vertical blanking (VBLANK) interval.
+ * Uses a double-waiting loop pattern to synchronize accurately with raster timing.
+ */
 void atari7800_wait_vblank(void) {
   while ((ATARI7800_MSTAT & 0x80u) != 0) {
   }
@@ -57,6 +77,10 @@ void atari7800_wait_vblank(void) {
   }
 }
 
+/**
+ * Configures the MARIA display list address, waiting for VBLANK to set
+ * video mode (CTRL) and background color registers safely.
+ */
 void atari7800_configure_video(uint16_t display_list_addr, uint8_t ctrl,
                                uint8_t bgcolor) {
   atari7800_set_display_list(display_list_addr);
@@ -65,14 +89,21 @@ void atari7800_configure_video(uint16_t display_list_addr, uint8_t ctrl,
   ATARI7800_BACKGRND = bgcolor;
 }
 
+/**
+ * Startup helper that configures standard 160A wide-pixel direct rendering mode.
+ */
 void atari7800_init_160a(uint16_t display_list_addr, uint8_t bgcolor) {
   atari7800_init_system();
   atari7800_configure_video(display_list_addr,
-                            ATARI7800_CTRL_MODE_160A |
-                                ATARI7800_CTRL_DMA_ENABLE,
-                            bgcolor);
+                             ATARI7800_CTRL_MODE_160A |
+                                 ATARI7800_CTRL_DMA_ENABLE,
+                             bgcolor);
 }
 
+/**
+ * Populates a blank Display List List (DLL) for NTSC display timing.
+ * Reserves top, visible screen (28 zones), and bottom blank boundaries.
+ */
 void atari7800_maria_build_blank_ntsc(
     atari7800_maria_dll_entry_t *display_list,
     const atari7800_maria_null_header_t *zone_header) {
@@ -90,19 +121,9 @@ void atari7800_maria_build_blank_ntsc(
   atari7800_maria_init_dll_entry(&display_list[32], 8, zone_header, 0);
 }
 
-void atari7800_maria_build_ntsc_single_zone(
-    atari7800_maria_dll_entry_t *display_list,
-    const atari7800_maria_null_header_t *null_zone_header,
-    uint8_t visible_zone_index, const void *visible_zone_header) {
-  if (visible_zone_index > 27u) {
-    visible_zone_index = 0u;
-  }
-
-  atari7800_maria_build_blank_ntsc(display_list, null_zone_header);
-  atari7800_maria_init_dll_entry(&display_list[(uint8_t)(1u + visible_zone_index)],
-                                 7, visible_zone_header, 0);
-}
-
+/**
+ * Sets three 8-bit colors for a specified MARIA palette slot (0-7).
+ */
 void atari7800_set_palette3(uint8_t palette_index, atari7800_palette3_t colors) {
   volatile uint8_t *base;
 
@@ -117,19 +138,9 @@ void atari7800_set_palette3(uint8_t palette_index, atari7800_palette3_t colors) 
   base[2] = colors.c3;
 }
 
-void atari7800_maria_build_sprite_zone5(uint8_t *zone, uint16_t sprite_addr,
-                                        uint8_t mode, uint8_t palette,
-                                        uint8_t width_twos_comp,
-                                        uint8_t x_pos) {
-  zone[0] = (uint8_t)(sprite_addr & 0xffu);
-  zone[1] = mode;
-  zone[2] = (uint8_t)(sprite_addr >> 8);
-  zone[3] = atari7800_maria_pal_width(palette, width_twos_comp);
-  zone[4] = x_pos;
-  zone[5] = 0x00u;
-  zone[6] = 0x00u;
-}
-
+/**
+ * Clears the specified zone buffer by filling it with zeros.
+ */
 void atari7800_maria_clear_zone(uint8_t *zone, uint16_t zone_size) {
   uint16_t i;
 
@@ -138,6 +149,10 @@ void atari7800_maria_clear_zone(uint8_t *zone, uint16_t zone_size) {
   }
 }
 
+/**
+ * Writes a 5-byte Direct Mode sprite header followed by two null terminator bytes
+ * into the zone buffer at a specific object index.
+ */
 uint8_t atari7800_maria_plot_sprite_zone5(uint8_t *zone, uint16_t zone_size,
                                           uint8_t object_index,
                                           uint16_t sprite_addr, uint8_t mode,
@@ -165,6 +180,9 @@ uint8_t atari7800_maria_plot_sprite_zone5(uint8_t *zone, uint16_t zone_size,
   return 1u;
 }
 
+/**
+ * Resolves a sprite asset descriptor's data pointer and invokes the base plot function.
+ */
 uint8_t atari7800_maria_plot_sprite_asset_zone5(
     uint8_t *zone, uint16_t zone_size, uint8_t object_index,
     const atari7800_sprite_asset_t *asset, uint8_t x_pos) {
@@ -182,13 +200,12 @@ uint8_t atari7800_maria_plot_sprite_asset_zone5(
                                            asset->width_twos_comp, x_pos);
 }
 
+/**
+ * Initializes the stateful scene manager, building the DLL structure
+ * and clearing the low/high zone buffers.
+ */
 void atari7800_scene_init_160a(atari7800_scene_t *scene, uint8_t bgcolor) {
   uint8_t zone_index;
-
-  scene->zone = &atari7800_scene_zones[0][0];
-  scene->zone_size = ATARI7800_SCENE_ZONE_BYTES;
-  scene->next_object = 0u;
-  scene->initialized = 1u;
 
   atari7800_maria_init_null_header(&atari7800_scene_null_zone, 0u);
   atari7800_maria_build_blank_ntsc(atari7800_scene_display_list,
@@ -209,6 +226,9 @@ void atari7800_scene_init_160a(atari7800_scene_t *scene, uint8_t bgcolor) {
   atari7800_init_160a(atari7800_ptr16(atari7800_scene_display_list), bgcolor);
 }
 
+/**
+ * Set a color palette inside a managed scene.
+ */
 void atari7800_scene_set_palette(atari7800_scene_t *scene,
                                  uint8_t palette_index,
                                  atari7800_palette3_t colors) {
@@ -216,6 +236,9 @@ void atari7800_scene_set_palette(atari7800_scene_t *scene,
   atari7800_set_palette3(palette_index, colors);
 }
 
+/**
+ * Resets per-zone object cursors at the beginning of a frame.
+ */
 void atari7800_scene_begin_frame(atari7800_scene_t *scene) {
   (void)scene;
 
@@ -223,22 +246,20 @@ void atari7800_scene_begin_frame(atari7800_scene_t *scene) {
     atari7800_scene_active_zones_curr[z_idx] = 0u;
   }
 
-  /* Reset per-zone object cursors but keep currently active DLL bindings stable
-   * through the frame to avoid visible blank windows.
-   */
   for (uint8_t zone_index = 0; zone_index < ATARI7800_SCENE_VISIBLE_ZONES;
        ++zone_index) {
     atari7800_scene_zone_next_object[zone_index] = 0u;
   }
 }
 
+/**
+ * Clears display lists of zones that were active in the previous frame
+ * but went unused in the current frame, preventing flickering or trail artifacts.
+ */
 void atari7800_scene_end_frame(atari7800_scene_t *scene) {
   uint8_t zone_index;
   (void)scene;
 
-  /* Zones that were active last frame but not redrawn this frame are disabled
-   * here, after draw submission is complete.
-   */
   for (zone_index = 0; zone_index < ATARI7800_SCENE_VISIBLE_ZONES;
        ++zone_index) {
     if (atari7800_scene_active_zones_prev[zone_index] != 0u &&
@@ -254,31 +275,11 @@ void atari7800_scene_end_frame(atari7800_scene_t *scene) {
   }
 }
 
-void atari7800_scene_begin(atari7800_scene_t *scene, uint8_t *zone,
-                           uint16_t zone_size) {
-  scene->zone = zone;
-  scene->zone_size = zone_size;
-  scene->next_object = 0u;
-  scene->initialized = 0u;
-  atari7800_maria_clear_zone(zone, zone_size);
-}
-
-uint8_t atari7800_scene_plotsprite(atari7800_scene_t *scene,
-                                   const void *sprite_data, uint8_t mode,
-                                   uint8_t palette, uint8_t width_twos_comp,
-                                   uint8_t x_pos) {
-  const uint8_t object_index = scene->next_object;
-
-  if (!atari7800_plotsprite(scene->zone, scene->zone_size, object_index,
-                            sprite_data, mode, palette, width_twos_comp,
-                            x_pos)) {
-    return 0u;
-  }
-
-  scene->next_object = (uint8_t)(scene->next_object + 1u);
-  return 1u;
-}
-
+/**
+ * Draws a sprite asset at coordinates (x, y). Matches the vertical coordinate
+ * to the appropriate 8-line screen zone, checks for buffer overflows, plots the
+ * 5-byte header, and links the zone to the active display list.
+ */
 uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
                                     const atari7800_sprite_asset_t *asset,
                                     uint8_t x_pos, uint8_t y_pos) {
@@ -324,6 +325,12 @@ uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
   return 1u;
 }
 
+/**
+ * Draws a string of characters at coordinates (x, y). Highly optimized to fit
+ * within the strict NTSC VBLANK window: caches font parameters in registers,
+ * uses 8-bit offset indexing, loops cleanly over character glyphs, and plots
+ * the 5-byte headers directly.
+ */
 uint8_t atari7800_scene_draw_text(atari7800_scene_t *scene,
                                   const atari7800_font_descriptor_t *font,
                                   uint8_t x_pos, uint8_t y_pos,
@@ -474,20 +481,5 @@ uint8_t atari7800_scene_draw_text(atari7800_scene_t *scene,
 
   /* Write back final zone's object cursor */
   atari7800_scene_zone_next_object[zone_index] = object_index;
-  return 1u;
-}
-
-uint8_t atari7800_scene_plotchars(atari7800_scene_t *scene,
-                                  const void *char_data, uint8_t mode,
-                                  uint8_t palette, uint8_t width_twos_comp,
-                                  uint8_t x_pos) {
-  const uint8_t object_index = scene->next_object;
-
-  if (!atari7800_plotchars(scene->zone, scene->zone_size, object_index,
-                           char_data, mode, palette, width_twos_comp, x_pos)) {
-    return 0u;
-  }
-
-  scene->next_object = (uint8_t)(scene->next_object + 1u);
   return 1u;
 }
