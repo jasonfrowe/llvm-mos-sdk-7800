@@ -202,23 +202,27 @@ int main(void) {
 
     atari7800_scene_begin_frame(&scene);
 
-    /* Render stars with fine vertical positioning */
+    /* Render stars (clipping to gameplay area Y >= 16 to keep HUD zone clean) */
     for (i = 0; i < 4; ++i) {
-      draw_sprite_fine(&star_sprite, stars[i].x, stars[i].y);
+      if (stars[i].y >= 16) {
+        draw_sprite_fine(&star_sprite, stars[i].x, stars[i].y);
+      }
     }
 
     /* Draw player spaceship (16 lines high, split into two 8-line zones) */
     atari7800_sprite_asset_t top_half = spaceship_frames[angle];
     top_half.height_lines = 8;
+    top_half.palette = 5; /* Use Palette 5 (Spaceship) */
     top_half.data = (const uint8_t *)((uintptr_t)top_half.data + 8 * 256);
 
     atari7800_sprite_asset_t bottom_half = spaceship_frames[angle];
     bottom_half.height_lines = 8;
+    bottom_half.palette = 5; /* Use Palette 5 (Spaceship) */
 
     draw_sprite_fine(&top_half, 72, 90);
     draw_sprite_fine(&bottom_half, 72, 90 + 8);
 
-    /* Draw HUD text (11 objects: fits in 12-object limit) */
+    /* Draw HUD text */
     atari7800_scene_draw_text(&scene, &hud_font, 4, 8, "SHLD:100 L:3");
 
     atari7800_scene_end_frame(&scene);
