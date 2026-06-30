@@ -106,6 +106,17 @@ typedef struct atari7800_sprite_asset {
 	uint8_t data_layout;
 } atari7800_sprite_asset_t;
 
+typedef struct atari7800_font_descriptor {
+	const atari7800_sprite_asset_t *glyphs;
+	const uint8_t *char_to_glyph;
+	uint8_t char_to_glyph_len;
+	uint8_t first_char;
+	uint8_t glyph_count;
+	uint8_t glyph_advance;
+	uint8_t space_advance;
+	uint8_t line_advance;
+} atari7800_font_descriptor_t;
+
 typedef struct atari7800_scene {
 	uint8_t *zone;
 	uint16_t zone_size;
@@ -185,6 +196,9 @@ uint8_t atari7800_scene_plotsprite(atari7800_scene_t *scene,
 uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
 		const atari7800_sprite_asset_t *asset, uint8_t x_pos,
 		uint8_t y_pos);
+uint8_t atari7800_scene_draw_text(atari7800_scene_t *scene,
+		const atari7800_font_descriptor_t *font,
+		uint8_t x_pos, uint8_t y_pos, const char *text);
 uint8_t atari7800_scene_plotchars(atari7800_scene_t *scene,
 		const void *char_data, uint8_t mode, uint8_t palette,
 		uint8_t width_twos_comp, uint8_t x_pos);
