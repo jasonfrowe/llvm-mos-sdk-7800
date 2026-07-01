@@ -325,40 +325,32 @@ void atari7800_scene_end_frame(atari7800_scene_t *scene) {
  * to the appropriate 8-line screen zone, checks for buffer overflows, plots the
  * 5-byte header, and links the zone to the active display list.
  */
-uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
-                                    const atari7800_sprite_asset_t *asset,
-                                    uint8_t x_pos, uint8_t y_pos) {
-  uint8_t zone_index;
-  uint8_t object_index;
-  uint8_t *zone;
-  uint8_t zone_shift = (scene && scene->initialized) ? scene->zone_shift : 3u;
-  uint8_t visible_zones = (scene && scene->initialized) ? scene->visible_zones : ATARI7800_SCENE_VISIBLE_ZONES;
-  uint8_t zone_offset = (scene && scene->initialized) ? scene->zone_offset : 7u;
-
-  if (scene == 0 || asset == 0) {
+uint8_t atari7800_scene_draw_sprite_raw(atari7800_scene_t *scene,
+                                        const uint8_t *data,
+                                        uint8_t mode,
+                                        uint8_t palette,
+                                        uint8_t width_twos_comp,
+                                        uint8_t x_pos, uint8_t y_pos) {
+  if (scene == 0 || data == 0) {
     return 0u;
   }
 
-  if (scene->initialized == 0u) {
-    object_index = scene->next_object;
-    if (!atari7800_plotsprite_asset(scene->zone, scene->zone_size, object_index,
-                                    asset, x_pos)) {
-      return 0u;
-    }
-    scene->next_object = (uint8_t)(scene->next_object + 1u);
-    return 1u;
-  }
+  uint8_t zone_shift = scene->zone_shift;
+  uint8_t visible_zones = scene->visible_zones;
+  uint8_t zone_offset = scene->zone_offset;
 
-  zone_index = (uint8_t)(y_pos >> zone_shift);
+  uint8_t zone_index = (uint8_t)(y_pos >> zone_shift);
   if (zone_index >= visible_zones) {
     zone_index = (uint8_t)(visible_zones - 1u);
   }
 
-  zone = atari7800_scene_zones[zone_index];
-  object_index = atari7800_scene_zone_next_object[zone_index];
+  uint8_t *zone = atari7800_scene_zones[zone_index];
+  uint8_t object_index = atari7800_scene_zone_next_object[zone_index];
 
-  if (!atari7800_plotsprite_asset(zone, ATARI7800_SCENE_ZONE_BYTES,
-                                  object_index, asset, x_pos)) {
+  uint16_t sprite_addr = (uint16_t)(uintptr_t)data;
+  if (!atari7800_maria_plot_sprite_zone5(zone, ATARI7800_SCENE_ZONE_BYTES,
+                                         object_index, sprite_addr, mode,
+                                         palette, width_twos_comp, x_pos)) {
     return 0u;
   }
 
@@ -370,58 +362,6 @@ uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
 
   atari7800_scene_zone_next_object[zone_index] = (uint8_t)(object_index + 1u);
   atari7800_scene_active_zones_curr[zone_index] = 1u;
-  return 1u;
-}
-
-/**
- * Draws a sprite asset at coordinates (x, y) with pixel-fine vertical positioning.
- * Shims the graphics data pointer's high byte by (y_pos % zone_height) * 256.
- */
-uint8_t atari7800_scene_draw_sprite_fine(atari7800_scene_t *scene,
-                                         const atari7800_sprite_asset_t *asset,
-                                         uint8_t x_pos, uint8_t y_pos) {
-  uint8_t zone_mask = (scene && scene->initialized) ? scene->zone_mask : 7u;
-  uint8_t y_offset = y_pos & zone_mask;
-  atari7800_sprite_asset_t shifted_asset = *asset;
-  shifted_asset.data = (const uint8_t *)((uintptr_t)shifted_asset.data + ((uint16_t)y_offset << 8));
-  return atari7800_scene_draw_sprite(scene, &shifted_asset, x_pos, y_pos);
-}
-
-/**
- * Draws a 16-line high sprite dynamically split across 8-line or 16-line zones.
- * Shims the graphics pointers dynamically and handles zone overflows seamlessly.
- */
-uint8_t atari7800_scene_draw_sprite_16(atari7800_scene_t *scene,
-                                       const atari7800_sprite_asset_t *asset,
-                                       uint8_t x_pos, uint8_t y_pos) {
-  uint8_t zone_height = (scene && scene->initialized) ? scene->zone_height : 8u;
-  uint8_t zone_mask = (scene && scene->initialized) ? scene->zone_mask : 7u;
-  uint8_t y_offset = y_pos & zone_mask;
-
-  /* Zone 1 (z_start): Draws top part at offset y_offset */
-  atari7800_sprite_asset_t z1_asset = *asset;
-  z1_asset.height_lines = 8;
-  z1_asset.data = (const uint8_t *)((uintptr_t)z1_asset.data + (((uint16_t)(16u - zone_height) + y_offset) << 8));
-  atari7800_scene_draw_sprite(scene, &z1_asset, x_pos, y_pos);
-
-  /* Zone 2 (z_start + 1): Draws middle/bottom part starting from Row (8 - y_offset) */
-  atari7800_sprite_asset_t z2_asset = *asset;
-  z2_asset.height_lines = 8;
-  if (zone_height == 16) {
-    z2_asset.data = (const uint8_t *)((uintptr_t)z2_asset.data + ((uint16_t)y_offset << 8) - 16 * 256);
-  } else {
-    z2_asset.data = (const uint8_t *)((uintptr_t)z2_asset.data + ((uint16_t)y_offset << 8));
-  }
-  atari7800_scene_draw_sprite(scene, &z2_asset, x_pos, (uint8_t)(y_pos + zone_height));
-
-  /* Zone 3 (z_start + 2): Draws bottom part (y_offset lines) - only needed for 8-line zones */
-  if (zone_height == 8 && y_offset > 0) {
-    atari7800_sprite_asset_t z3_asset = *asset;
-    z3_asset.height_lines = 8;
-    z3_asset.data = (const uint8_t *)((uintptr_t)z3_asset.data + ((uint16_t)y_offset << 8) - 8 * 256);
-    atari7800_scene_draw_sprite(scene, &z3_asset, x_pos, (uint8_t)(y_pos + 16));
-  }
-
   return 1u;
 }
 

@@ -231,9 +231,7 @@ int main(void) {
     }
 
     /* Draw player spaceship (16 lines high, split dynamically across 16-line zones) */
-    atari7800_sprite_asset_t player_ship = spaceship_frames[angle];
-    player_ship.palette = 5; /* Use Palette 5 (Spaceship) */
-    atari7800_scene_draw_sprite_16(&scene, &player_ship, 72, 90);
+    atari7800_scene_draw_sprite_16(&scene, &spaceship_frames[angle], 72, 90);
 
     /* Draw HUD text (fits cleanly in 16-line zone) */
     atari7800_scene_draw_text(&scene, &hud_font, 4, 8, "SHLD:100 L:3");

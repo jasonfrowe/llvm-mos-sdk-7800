@@ -199,15 +199,117 @@ void atari7800_scene_set_palette(atari7800_scene_t *scene,
 		uint8_t palette_index, atari7800_palette3_t colors);
 void atari7800_scene_begin_frame(atari7800_scene_t *scene);
 void atari7800_scene_end_frame(atari7800_scene_t *scene);
-uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
-		const atari7800_sprite_asset_t *asset, uint8_t x_pos,
-		uint8_t y_pos);
-uint8_t atari7800_scene_draw_sprite_fine(atari7800_scene_t *scene,
-		const atari7800_sprite_asset_t *asset, uint8_t x_pos,
-		uint8_t y_pos);
-uint8_t atari7800_scene_draw_sprite_16(atari7800_scene_t *scene,
-		const atari7800_sprite_asset_t *asset, uint8_t x_pos,
-		uint8_t y_pos);
+uint8_t atari7800_scene_draw_sprite_raw(atari7800_scene_t *scene,
+                                        const uint8_t *data,
+                                        uint8_t mode,
+                                        uint8_t palette,
+                                        uint8_t width_twos_comp,
+                                        uint8_t x_pos, uint8_t y_pos);
+
+#define ATARI7800_HIGH_BYTE(ptr) ((uint8_t)(((uintptr_t)(ptr)) >> 8))
+#define ATARI7800_LOW_BYTE(ptr)  ((uint8_t)(((uintptr_t)(ptr)) & 0xffu))
+#define ATARI7800_MAKE_PTR(low, high) ((const uint8_t *)(((uint16_t)(high) << 8) | (low)))
+
+static inline uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
+                                                  const atari7800_sprite_asset_t *asset,
+                                                  uint8_t x_pos, uint8_t y_pos) {
+  if (asset == 0) return 0u;
+  return atari7800_scene_draw_sprite_raw(scene, asset->data, asset->mode,
+                                         asset->palette, asset->width_twos_comp,
+                                         x_pos, y_pos);
+}
+
+static inline uint8_t atari7800_scene_draw_sprite_fine(atari7800_scene_t *scene,
+                                                       const atari7800_sprite_asset_t *asset,
+                                                       uint8_t x_pos, uint8_t y_pos) {
+  if (scene == 0 || asset == 0) return 0u;
+  uint8_t zone_mask = scene->zone_mask;
+  uint8_t y_offset = y_pos & zone_mask;
+
+  uint8_t high = ATARI7800_HIGH_BYTE(asset->data) + y_offset;
+  uint8_t low = ATARI7800_LOW_BYTE(asset->data);
+  return atari7800_scene_draw_sprite_raw(scene, ATARI7800_MAKE_PTR(low, high),
+                                         asset->mode, asset->palette,
+                                         asset->width_twos_comp, x_pos, y_pos);
+}
+
+static inline uint8_t atari7800_scene_draw_sprite_16(atari7800_scene_t *scene,
+                                                     const atari7800_sprite_asset_t *asset,
+                                                     uint8_t x_pos, uint8_t y_pos) {
+  if (scene == 0 || asset == 0) {
+    return 0u;
+  }
+  uint8_t zone_height = scene->zone_height;
+  uint8_t zone_mask = scene->zone_mask;
+  uint8_t y_offset = y_pos & zone_mask;
+
+  uint8_t base_high = ATARI7800_HIGH_BYTE(asset->data);
+  uint8_t low = ATARI7800_LOW_BYTE(asset->data);
+
+  /* Zone 1 (z_start): Draws top part at offset y_offset */
+  uint8_t high1 = base_high + (16u - zone_height) + y_offset;
+  atari7800_scene_draw_sprite_raw(scene, ATARI7800_MAKE_PTR(low, high1),
+                                  asset->mode, asset->palette,
+                                  asset->width_twos_comp, x_pos, y_pos);
+
+  /* Zone 2 (z_start + 1): Draws middle/bottom part */
+  if (zone_height == 8 || y_offset > 0) {
+    uint8_t page_offset2 = (zone_height == 16) ? (y_offset - 16u) : y_offset;
+    uint8_t high2 = base_high + page_offset2;
+    atari7800_scene_draw_sprite_raw(scene, ATARI7800_MAKE_PTR(low, high2),
+                                    asset->mode, asset->palette,
+                                    asset->width_twos_comp, x_pos, (uint8_t)(y_pos + zone_height));
+  }
+
+  /* Zone 3 (z_start + 2): Draws bottom part - only needed for 8-line zones */
+  if (zone_height == 8 && y_offset > 0) {
+    uint8_t high3 = base_high + y_offset - 8u;
+    atari7800_scene_draw_sprite_raw(scene, ATARI7800_MAKE_PTR(low, high3),
+                                    asset->mode, asset->palette,
+                                    asset->width_twos_comp, x_pos, (uint8_t)(y_pos + 16));
+  }
+
+  return 1u;
+}
+
+static inline uint8_t atari7800_scene_draw_sprite_8(atari7800_scene_t *scene,
+                                                    const atari7800_sprite_asset_t *asset,
+                                                    uint8_t x_pos, uint8_t y_pos) {
+  if (scene == 0 || asset == 0) {
+    return 0u;
+  }
+  uint8_t zone_height = scene->zone_height;
+  uint8_t zone_mask = scene->zone_mask;
+  uint8_t y_offset = y_pos & zone_mask;
+
+  uint8_t base_high = ATARI7800_HIGH_BYTE(asset->data);
+  uint8_t low = ATARI7800_LOW_BYTE(asset->data);
+
+  /* Zone 1: Top part */
+  uint8_t high1 = base_high + 7u + y_offset;
+  atari7800_scene_draw_sprite_raw(scene, ATARI7800_MAKE_PTR(low, high1),
+                                  asset->mode, asset->palette,
+                                  asset->width_twos_comp, x_pos, y_pos);
+
+  /* Zone 2: Bottom part (if it spans across zone boundary) */
+  if (zone_height == 8) {
+    if (y_offset > 0) {
+      uint8_t high2 = base_high + y_offset - 1u;
+      atari7800_scene_draw_sprite_raw(scene, ATARI7800_MAKE_PTR(low, high2),
+                                      asset->mode, asset->palette,
+                                      asset->width_twos_comp, x_pos, (uint8_t)(y_pos + 8));
+    }
+  } else { /* zone_height == 16 */
+    if (y_offset > 8) {
+      uint8_t high2 = base_high + y_offset - 9u;
+      atari7800_scene_draw_sprite_raw(scene, ATARI7800_MAKE_PTR(low, high2),
+                                      asset->mode, asset->palette,
+                                      asset->width_twos_comp, x_pos, (uint8_t)(y_pos + 16));
+    }
+  }
+
+  return 1u;
+}
 uint8_t atari7800_scene_draw_text(atari7800_scene_t *scene,
 		const atari7800_font_descriptor_t *font,
 		uint8_t x_pos, uint8_t y_pos, const char *text);
