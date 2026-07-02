@@ -1,0 +1,238 @@
+     VMA      LMA     Size Align Out     In      Symbol
+       0        0        0     1 PROVIDE(__cart_rom_size = 32)
+       0        0        0     1 
+       0        0        0     1 PROVIDE(__stack = 0x2800)
+       0        0        0     1 __rc0 = 0x80
+       0        0        0     1 __rc1 = __rc0 + 1
+       0        0        0     1 PROVIDE(__rc2 = __rc1 + 1)
+       0        0        0     1 __rc3 = __rc2 + 1
+       0        0        0     1 PROVIDE(__rc4 = __rc3 + 1)
+       0        0        0     1 __rc5 = __rc4 + 1
+       0        0        0     1 PROVIDE(__rc6 = __rc5 + 1)
+       0        0        0     1 __rc7 = __rc6 + 1
+       0        0        0     1 PROVIDE(__rc8 = __rc7 + 1)
+       0        0        0     1 __rc9 = __rc8 + 1
+       0        0        0     1 PROVIDE(__rc10 = __rc9 + 1)
+       0        0        0     1 __rc11 = __rc10 + 1
+       0        0        0     1 PROVIDE(__rc12 = __rc11 + 1)
+       0        0        0     1 __rc13 = __rc12 + 1
+       0        0        0     1 PROVIDE(__rc14 = __rc13 + 1)
+       0        0        0     1 __rc15 = __rc14 + 1
+       0        0        0     1 PROVIDE(__rc16 = __rc15 + 1)
+       0        0        0     1 __rc17 = __rc16 + 1
+       0        0        0     1 PROVIDE(__rc18 = __rc17 + 1)
+       0        0        0     1 __rc19 = __rc18 + 1
+       0        0        0     1 PROVIDE(__rc20 = __rc19 + 1)
+       0        0        0     1 __rc21 = __rc20 + 1
+       0        0        0     1 PROVIDE(__rc22 = __rc21 + 1)
+       0        0        0     1 __rc23 = __rc22 + 1
+       0        0        0     1 PROVIDE(__rc24 = __rc23 + 1)
+       0        0        0     1 __rc25 = __rc24 + 1
+       0        0        0     1 PROVIDE(__rc26 = __rc25 + 1)
+       0        0        0     1 __rc27 = __rc26 + 1
+       0        0        0     1 PROVIDE(__rc28 = __rc27 + 1)
+       0        0        0     1 __rc29 = __rc28 + 1
+       0        0        0     1 PROVIDE(__rc30 = __rc29 + 1)
+       0        0        0     1 __rc31 = __rc30 + 1
+       0        0        0     1 
+       0        0        0     1 PROVIDE(nmi = _atari7800_irq_default)
+       0        0        0     1 PROVIDE(irq = _atari7800_irq_default)
+    1a00     1a00      380     1 .scene_zones_low
+    1a00     1a00      380     1         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.scene_zones_low)
+    1a00     1a00      380     1                 atari7800_scene_zones_low
+    2200     2200      380     1 .scene_zones_high
+    2200     2200      380     1         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.scene_zones_high)
+    2200     2200      380     1                 atari7800_scene_zones_high
+      a0       a0        0     1 .zp.data
+      a0       a0        0     1         __zp_data_start = .
+      a0       a0        0     1 __zp_data_load_start = LOADADDR(.zp.data)
+      a0       a0        0     1 __zp_data_size = SIZEOF(.zp.data)
+      a0       a0       42     1 .zp.bss
+      a0       a0        0     1         __zp_bss_start = .
+      a0       a0       42     1         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.zp.bss)
+      a0       a0        6     1                 enemies
+      a6       a6        2     1                 frame_count
+      a8       a8        c     1                 stars
+      b4       b4        1     1                 cycle_state
+      b5       b5        1     1                 rot_timer
+      b6       b6        1     1                 angle
+      b7       b7        1     1                 vx_p
+      b8       b8        1     1                 vx_m
+      b9       b9        1     1                 vy_m
+      ba       ba        1     1                 vy_p
+      bb       bb        1     1                 rx
+      bc       bc        1     1                 acc_mx
+      bd       bd        1     1                 ry
+      be       be        1     1                 acc_my
+      bf       bf        1     1                 scene.2
+      c0       c0        1     1                 scene.3
+      c1       c1        1     1                 scene.4
+      c2       c2        1     1                 scene.5
+      c3       c3        1     1                 scene.6
+      c4       c4        1     1                 scene.7
+      c5       c5        1     1                 scene.8
+      c6       c6       1c     1                 atari7800_scene_active_zones_prev
+      e2       e2        0     1 __zp_bss_size = SIZEOF(.zp.bss)
+      e2       e2       14     1 .zp
+      e2       e2       14     1         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.zp.noinit)
+    8000     8000      b9f     1 .text
+    8000     8000        0     1         _init = .
+    8000     8000        0     1         _start = .
+    8000     8000       12     1         /Users/jasonrowe/Software/Atari7800/llvm-mos-sdk-7800/build/dev-bootstrap/mos-platform/build/install/bin/../mos-platform/atari7800/lib/libcrt0.a(reset.S.obj):(.init.50)
+    8000     8000        0     1                 __do_7800_reset
+    8012     8012        8     1         /Users/jasonrowe/Software/Atari7800/llvm-mos-sdk-7800/build/dev-bootstrap/mos-platform/build/install/bin/../mos-platform/atari7800/lib/libcrt0.a(init-stack.S.obj):(.init.100)
+    8012     8012        0     1                 __do_init_stack
+    801a     801a        3     1         /Users/jasonrowe/Software/Atari7800/llvm-mos-sdk-7800/build/dev-bootstrap/mos-platform/build/install/bin/../mos-platform/atari7800/lib/libcrt0.a(zero-bss.c.obj):(.init.200)
+    801a     801a        0     1                 __do_zero_bss
+    801d     801d        3     1         /Users/jasonrowe/Software/Atari7800/llvm-mos-sdk-7800/build/dev-bootstrap/mos-platform/build/install/bin/../mos-platform/atari7800/lib/libcrt0.a(zero-zp-bss.c.obj):(.init.200)
+    801d     801d        0     1                 __do_zero_zp_bss
+    8020     8020        3     1         /Users/jasonrowe/Software/Atari7800/llvm-mos-sdk-7800/build/dev-bootstrap/mos-platform/build/install/bin/../mos-platform/common/lib/crt0.o:(.call_main)
+    8023     8023        3     1         /Users/jasonrowe/Software/Atari7800/llvm-mos-sdk-7800/build/dev-bootstrap/mos-platform/build/install/bin/../mos-platform/atari7800/lib/libcrt0.a(exit-custom.S.obj):(.after_main)
+    8023     8023        0     1                 __after_main
+    8026     8026        0     1         _fini = .
+    8026     8026        1     1         /Users/jasonrowe/Software/Atari7800/llvm-mos-sdk-7800/build/dev-bootstrap/mos-platform/build/install/bin/../mos-platform/common/lib/crt0.o:(.fini_rts)
+    8027     8027        1     1         /Users/jasonrowe/Software/Atari7800/llvm-mos-sdk-7800/build/dev-bootstrap/mos-platform/build/install/bin/../mos-platform/atari7800/lib/libcrt0.a(reset.S.obj):(.text._atari7800_irq_default)
+    8027     8027        0     1                 _atari7800_irq_default
+    8028     8028       13     1         /Users/jasonrowe/Software/Atari7800/llvm-mos-sdk-7800/build/dev-bootstrap/mos-platform/build/install/bin/../mos-platform/atari7800/lib/libcrt0.a(zero-bss.c.obj):(.text.__zero_bss)
+    8028     8028       13     1                 __zero_bss
+    803b     803b       13     1         /Users/jasonrowe/Software/Atari7800/llvm-mos-sdk-7800/build/dev-bootstrap/mos-platform/build/install/bin/../mos-platform/atari7800/lib/libcrt0.a(zero-zp-bss.c.obj):(.text.__zero_zp_bss)
+    803b     803b       13     1                 __zero_zp_bss
+    804e     804e       25     1         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.text.neutralize)
+    804e     804e       25     1                 neutralize
+    8073     8073      797     1         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.text.main)
+    8073     8073      797     1                 main
+    880a     880a       cf     1         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.text.atari7800_scene_draw_sprite_16)
+    880a     880a       cf     1                 atari7800_scene_draw_sprite_16
+    88d9     88d9        6     1         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.text.exit)
+    88d9     88d9        6     1                 exit
+    88df     88df      152     1         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.text.atari7800_scene_draw_sprite_raw)
+    88df     88df      152     1                 atari7800_scene_draw_sprite_raw
+    8a31     8a31       13     1         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.text.__lshrhi3)
+    8a31     8a31       13     1                 __lshrhi3
+    8a44     8a44       22     1         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.text.__memset)
+    8a44     8a44       22     1                 __memset
+    8a66     8a66      119     1         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.text)
+    8a66     8a66        9     1                 star_palettes
+    8a6f     8a6f        8     1                 star_sprite
+    8a77     8a77        8     1                 fighter_sprite
+    8a7f     8a7f       80     1                 spaceship_frames
+    8aff     8aff       80     1                 hud_font_char_to_glyph
+    8b7f     8b7f       20     1         <internal>:(.text)
+    8b9f     8b9f        0     1         __init_array_start = .
+    8b9f     8b9f        0     1         __init_array_end = .
+    8b9f     8b9f        0     1         __fini_array_start = .
+    8b9f     8b9f        0     1         __fini_array_end = .
+    a000     a000     5f7d  8192 .rodata
+    a000     a000     1000  8192         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.rodata.hud_font_data)
+    a000     a000     1000     1                 hud_font_data
+    c000     c000      f02  8192         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.rodata.fighter_sprite_data)
+    c000     c000      f02     1                 fighter_sprite_data
+    e000     e000     1f38  8192         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.rodata.spaceship_data)
+    e000     e000     1f38     1                 spaceship_data
+    ff38     ff38        d     1         <internal>:(.rodata.str1.1)
+    ff45     ff45       38     1         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.rodata.atari7800_scene_zones)
+    ff45     ff45       38     1                 atari7800_scene_zones
+    2580     2580        0     1 .data
+    2580     2580        0     1         __data_start = .
+    2580     2580        0     1         __data_end = .
+    2580     2580        0     1 __data_load_start = LOADADDR(.data)
+    2580     2580        0     1 __data_size = SIZEOF(.data)
+    2580     2580       9d     1 .bss
+    2580     2580        0     1         __bss_start = .
+    2580     2580        2     1         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.bss.atari7800_scene_null_zone)
+    2580     2580        2     1                 atari7800_scene_null_zone
+    2582     2582       63     1         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.bss.atari7800_scene_display_list)
+    2582     2582       63     1                 atari7800_scene_display_list
+    25e5     25e5       1c     1         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.bss.atari7800_scene_active_zones_curr)
+    25e5     25e5       1c     1                 atari7800_scene_active_zones_curr
+    2601     2601       1c     1         build/dev-bootstrap/examples/atari7800/astrowing.a78.lto.o:(.bss.atari7800_scene_zone_next_object)
+    2601     2601       1c     1                 atari7800_scene_zone_next_object
+    261d     261d        0     1         __bss_end = .
+    261d     261d        0     1 __bss_size = SIZEOF(.bss)
+    261d     261d        0     1 .noinit
+    261d     261d        0     1         __heap_start = ALIGN(., 2)
+       0        0       80     1 .a78_header
+       0        0        1     1         BYTE(4)
+       1        1        1     1         BYTE(0x41)
+       2        2        1     1         BYTE(0x54)
+       3        3        1     1         BYTE(0x41)
+       4        4        1     1         BYTE(0x52)
+       5        5        1     1         BYTE(0x49)
+       6        6        1     1         BYTE(0x37)
+       7        7        1     1         BYTE(0x38)
+       8        8        1     1         BYTE(0x30)
+       9        9        1     1         BYTE(0x30)
+       a        a        1     1         BYTE(0x20)
+       b        b        1     1         BYTE(0x20)
+       c        c        1     1         BYTE(0x20)
+       d        d        1     1         BYTE(0x20)
+       e        e        1     1         BYTE(0x20)
+       f        f        1     1         BYTE(0x20)
+      10       10        1     1         BYTE(0x20)
+      11       11       20     1         . = . + 32
+      31       31        1     1         BYTE((__cart_rom_size * 1024 >> 24) & 0xff)
+      32       32        1     1         BYTE((__cart_rom_size * 1024 >> 16) & 0xff)
+      33       33        1     1         BYTE((__cart_rom_size * 1024 >> 8) & 0xff)
+      34       34        1     1         BYTE((__cart_rom_size * 1024 >> 0) & 0xff)
+      35       35        1     1         BYTE(0)
+      36       36        1     1         BYTE(0)
+      37       37        1     1         BYTE(1)
+      38       38        1     1         BYTE(1)
+      39       39        1     1         BYTE(0)
+      3a       3a        1     1         BYTE(0)
+      3b       3b        4     1         . = . + 4
+      3f       3f        1     1         BYTE(0)
+      40       40        1     1         BYTE(0)
+      41       41        1     1         BYTE(0)
+      42       42        1     1         BYTE(0)
+      43       43        1     1         BYTE(0)
+      44       44        1     1         BYTE(0)
+      45       45        1     1         BYTE(0)
+      46       46       1e     1         . = . + 30
+      64       64        1     1         BYTE(0x41)
+      65       65        1     1         BYTE(0x43)
+      66       66        1     1         BYTE(0x54)
+      67       67        1     1         BYTE(0x55)
+      68       68        1     1         BYTE(0x41)
+      69       69        1     1         BYTE(0x4c)
+      6a       6a        1     1         BYTE(0x20)
+      6b       6b        1     1         BYTE(0x43)
+      6c       6c        1     1         BYTE(0x41)
+      6d       6d        1     1         BYTE(0x52)
+      6e       6e        1     1         BYTE(0x54)
+      6f       6f        1     1         BYTE(0x20)
+      70       70        1     1         BYTE(0x44)
+      71       71        1     1         BYTE(0x41)
+      72       72        1     1         BYTE(0x54)
+      73       73        1     1         BYTE(0x41)
+      74       74        1     1         BYTE(0x20)
+      75       75        1     1         BYTE(0x53)
+      76       76        1     1         BYTE(0x54)
+      77       77        1     1         BYTE(0x41)
+      78       78        1     1         BYTE(0x52)
+      79       79        1     1         BYTE(0x54)
+      7a       7a        1     1         BYTE(0x53)
+      7b       7b        1     1         BYTE(0x20)
+      7c       7c        1     1         BYTE(0x48)
+      7d       7d        1     1         BYTE(0x45)
+      7e       7e        1     1         BYTE(0x52)
+      7f       7f        1     1         BYTE(0x45)
+      80       80        0     1 
+    f000     f000        3     1 .cart_rom_reset_entry
+    f000     f000        3     1         /Users/jasonrowe/Software/Atari7800/llvm-mos-sdk-7800/build/dev-bootstrap/mos-platform/build/install/bin/../mos-platform/atari7800/lib/libcrt0.a(reset.S.obj):(.cart_rom_reset_entry)
+    f000     f000        0     1                 atari7800_reset_entry
+    ff80     ff80       80     1 .cart_footer
+    ff80     ff80       78     1         . = . + 120
+    fff8     fff8        1     1         BYTE(0xff)
+    fff9     fff9        1     1         BYTE(0xf7)
+    fffa     fffa        2     1         SHORT(nmi)
+    fffc     fffc        2     1         SHORT(atari7800_reset_entry)
+    fffe     fffe        2     1         SHORT(irq)
+       0        0       cc     1 .comment
+       0        0       cc     1         <internal>:(.comment)
+       0        0      740     4 .symtab
+       0        0      740     4         <internal>:(.symtab)
+       0        0       ac     1 .shstrtab
+       0        0       ac     1         <internal>:(.shstrtab)
+       0        0      54b     1 .strtab
+       0        0      54b     1         <internal>:(.strtab)
