@@ -58,6 +58,14 @@ static uint8_t atari7800_scene_active_zones_prev[ATARI7800_SCENE_VISIBLE_ZONES];
 /* Tracker for active zones in the current frame. */
 static uint8_t atari7800_scene_active_zones_curr[ATARI7800_SCENE_VISIBLE_ZONES];
 
+/* Bitmask of zones pinned as "static residency" (see
+ * atari7800_scene_set_zone_static): begin_frame/end_frame skip these
+ * entirely instead of resetting/wiping them every frame, so content that
+ * rarely changes (e.g. HUD labels) costs nothing once drawn. Packed as a
+ * bitmask rather than one byte per zone since RAM is tight on this target. */
+#define ATARI7800_SCENE_STATIC_MASK_BYTES ((ATARI7800_SCENE_VISIBLE_ZONES + 7u) / 8u)
+static uint8_t atari7800_scene_zone_static[ATARI7800_SCENE_STATIC_MASK_BYTES];
+
 /**
  * Initializes the baseline hardware configuration of the Atari 7800.
  * Locks the console in 7800 mode, turns off DMA during initial setup,
@@ -228,6 +236,11 @@ void atari7800_scene_init_160a(atari7800_scene_t *scene, uint8_t bgcolor) {
     atari7800_scene_active_zones_curr[zone_index] = 0u;
   }
 
+  for (zone_index = 0; zone_index < ATARI7800_SCENE_STATIC_MASK_BYTES;
+       ++zone_index) {
+    atari7800_scene_zone_static[zone_index] = 0u;
+  }
+
   for (zone_index = 0; zone_index < ATARI7800_SCENE_VISIBLE_ZONES;
        ++zone_index) {
     atari7800_scene_zone_next_object[zone_index] = 0u;
@@ -251,18 +264,20 @@ void atari7800_scene_set_palette(atari7800_scene_t *scene,
 }
 
 /**
- * Resets per-zone object cursors at the beginning of a frame.
+ * Resets per-zone object cursors at the beginning of a frame. Zones pinned
+ * static (see atari7800_scene_set_zone_static) are skipped entirely, so
+ * their object cursor and display-list entry carry over untouched.
  */
 void atari7800_scene_begin_frame(atari7800_scene_t *scene) {
   (void)scene;
 
   for (uint8_t z_idx = 0; z_idx < ATARI7800_SCENE_VISIBLE_ZONES; ++z_idx) {
+    if ((atari7800_scene_zone_static[z_idx >> 3] &
+         (uint8_t)(1u << (z_idx & 7u))) != 0u) {
+      continue;
+    }
     atari7800_scene_active_zones_curr[z_idx] = 0u;
-  }
-
-  for (uint8_t zone_index = 0; zone_index < ATARI7800_SCENE_VISIBLE_ZONES;
-       ++zone_index) {
-    atari7800_scene_zone_next_object[zone_index] = 0u;
+    atari7800_scene_zone_next_object[z_idx] = 0u;
   }
 }
 
@@ -286,6 +301,40 @@ void atari7800_scene_end_frame(atari7800_scene_t *scene) {
     }
     atari7800_scene_active_zones_prev[zone_index] =
         atari7800_scene_active_zones_curr[zone_index];
+  }
+}
+
+/**
+ * Pins (is_static != 0) or unpins (is_static == 0) the zone containing
+ * y_pos as static residency. While pinned, atari7800_scene_begin_frame
+ * leaves the zone's object cursor and display-list entry untouched and
+ * atari7800_scene_end_frame never wipes it for going unused, so its
+ * last-drawn content persists every frame at zero per-frame cost. Draw
+ * into the zone as normal, then pin it once drawing is done; unpinning
+ * does not redraw or clear anything by itself, it just lets the next
+ * atari7800_scene_begin_frame resume resetting the zone as normal so new
+ * content can be drawn into it.
+ */
+void atari7800_scene_set_zone_static(atari7800_scene_t *scene, uint8_t y_pos,
+                                     uint8_t is_static) {
+  uint8_t zone_index;
+  uint8_t mask;
+  (void)scene;
+
+  zone_index = (uint8_t)(y_pos >> ATARI7800_ZONE_SHIFT);
+  if (zone_index >= ATARI7800_SCENE_VISIBLE_ZONES) {
+    zone_index = (uint8_t)(ATARI7800_SCENE_VISIBLE_ZONES - 1u);
+  }
+
+  mask = (uint8_t)(1u << (zone_index & 7u));
+
+  if (is_static != 0u) {
+    atari7800_scene_zone_static[zone_index >> 3] |= mask;
+    atari7800_scene_active_zones_curr[zone_index] = 1u;
+    atari7800_scene_active_zones_prev[zone_index] = 1u;
+  } else {
+    atari7800_scene_zone_static[zone_index >> 3] =
+        (uint8_t)(atari7800_scene_zone_static[zone_index >> 3] & ~mask);
   }
 }
 

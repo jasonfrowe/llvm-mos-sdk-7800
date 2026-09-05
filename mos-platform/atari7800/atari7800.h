@@ -243,6 +243,14 @@ void atari7800_scene_set_palette(atari7800_scene_t *scene,
 		uint8_t palette_index, atari7800_palette3_t colors);
 void atari7800_scene_begin_frame(atari7800_scene_t *scene);
 void atari7800_scene_end_frame(atari7800_scene_t *scene);
+/* Pins/unpins the zone containing y_pos as static residency: while pinned,
+ * begin_frame/end_frame leave it completely alone instead of resetting or
+ * wiping it every frame. Draw into the zone, then pin it once done; use
+ * this for HUD elements that only change occasionally instead of
+ * redrawing them every frame. See the definition in atari7800.c for the
+ * full pin/unpin contract. */
+void atari7800_scene_set_zone_static(atari7800_scene_t *scene, uint8_t y_pos,
+		uint8_t is_static);
 /* Returns ATARI7800_OK, ATARI7800_ERR_INVALID (null scene/asset), or
  * ATARI7800_ERR_BUDGET_FULL if the sprite's zone has no room left for it. */
 uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,

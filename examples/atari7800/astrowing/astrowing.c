@@ -215,6 +215,14 @@ int main(void) {
       (uint8_t)(sizeof(hud_glyph_entries) / sizeof(hud_glyph_entries[0])),
       &hud_glyph_run));
 
+  /* HUD text never changes in this demo, so draw it once and pin its zone
+   * static: begin_frame/end_frame then leave it alone every frame instead
+   * of re-blitting unchanged glyphs. */
+  atari7800_scene_begin_frame(&scene);
+  note_status(atari7800_scene_draw_glyph_run(&scene, &hud_font, 4, 8, &hud_glyph_run));
+  atari7800_scene_set_zone_static(&scene, 8, 1);
+  atari7800_scene_end_frame(&scene);
+
   for (;;) {
     atari7800_wait_vblank();
     frame_count++;
@@ -247,8 +255,8 @@ int main(void) {
     draw_sprite_fine(&top_half, 72, 88);
     draw_sprite_fine(&bottom_half, 72, 88 + 8);
 
-    /* Draw HUD text (pre-resolved glyph run; no runtime string parsing) */
-    note_status(atari7800_scene_draw_glyph_run(&scene, &hud_font, 4, 8, &hud_glyph_run));
+    /* HUD text is pinned static residency (see setup above) -- nothing to
+     * draw here every frame. */
 
     atari7800_scene_end_frame(&scene);
   }
