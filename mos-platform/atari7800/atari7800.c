@@ -8,9 +8,9 @@ static atari7800_maria_dll_entry_t
     atari7800_scene_display_list[ATARI7800_MARIA_NTSC_DLL_ENTRIES];
 
 /* Low-RAM and High-RAM display list zone buffers split to bypass physical memory shadow pages. */
-static uint8_t atari7800_scene_zones_low[14][ATARI7800_SCENE_ZONE_BYTES]
+static uint8_t atari7800_scene_zones_low[ATARI7800_SCENE_VISIBLE_ZONES / 2][ATARI7800_SCENE_ZONE_BYTES]
     __attribute__((section(".scene_zones_low")));
-static uint8_t atari7800_scene_zones_high[14][ATARI7800_SCENE_ZONE_BYTES]
+static uint8_t atari7800_scene_zones_high[ATARI7800_SCENE_VISIBLE_ZONES / 2][ATARI7800_SCENE_ZONE_BYTES]
     __attribute__((section(".scene_zones_high")));
 
 /* Read-only lookup table to access zone pointers by index (0-27). */
@@ -22,6 +22,7 @@ static uint8_t * const atari7800_scene_zones[ATARI7800_SCENE_VISIBLE_ZONES] = {
   &atari7800_scene_zones_low[4][0],
   &atari7800_scene_zones_low[5][0],
   &atari7800_scene_zones_low[6][0],
+#if ATARI7800_ZONE_HEIGHT == 8
   &atari7800_scene_zones_low[7][0],
   &atari7800_scene_zones_low[8][0],
   &atari7800_scene_zones_low[9][0],
@@ -29,6 +30,7 @@ static uint8_t * const atari7800_scene_zones[ATARI7800_SCENE_VISIBLE_ZONES] = {
   &atari7800_scene_zones_low[11][0],
   &atari7800_scene_zones_low[12][0],
   &atari7800_scene_zones_low[13][0],
+#endif
   &atari7800_scene_zones_high[0][0],
   &atari7800_scene_zones_high[1][0],
   &atari7800_scene_zones_high[2][0],
@@ -36,6 +38,7 @@ static uint8_t * const atari7800_scene_zones[ATARI7800_SCENE_VISIBLE_ZONES] = {
   &atari7800_scene_zones_high[4][0],
   &atari7800_scene_zones_high[5][0],
   &atari7800_scene_zones_high[6][0],
+#if ATARI7800_ZONE_HEIGHT == 8
   &atari7800_scene_zones_high[7][0],
   &atari7800_scene_zones_high[8][0],
   &atari7800_scene_zones_high[9][0],
@@ -43,6 +46,7 @@ static uint8_t * const atari7800_scene_zones[ATARI7800_SCENE_VISIBLE_ZONES] = {
   &atari7800_scene_zones_high[11][0],
   &atari7800_scene_zones_high[12][0],
   &atari7800_scene_zones_high[13][0],
+#endif
 };
 
 /* Tracker for the next available object slot index (0-12) inside each zone display list. */
@@ -111,14 +115,23 @@ void atari7800_maria_build_blank_ntsc(
 
   atari7800_maria_init_dll_entry(&display_list[0], 8, zone_header, 0);
 
+#if ATARI7800_ZONE_HEIGHT == 16
+  for (i = 0; i < 14; ++i) {
+    atari7800_maria_init_dll_entry(&display_list[1u + i], 0, zone_header, 0);
+  }
+  atari7800_maria_init_dll_entry(&display_list[15], 15, zone_header, 0);
+  atari7800_maria_init_dll_entry(&display_list[16], 9, zone_header, 0);
+  atari7800_maria_init_dll_entry(&display_list[17], 15, zone_header, 0);
+  atari7800_maria_init_dll_entry(&display_list[18], 8, zone_header, 0);
+#else
   for (i = 0; i < 28; ++i) {
     atari7800_maria_init_dll_entry(&display_list[1u + i], 7, zone_header, 0);
   }
-
   atari7800_maria_init_dll_entry(&display_list[29], 15, zone_header, 0);
   atari7800_maria_init_dll_entry(&display_list[30], 9, zone_header, 0);
   atari7800_maria_init_dll_entry(&display_list[31], 15, zone_header, 0);
   atari7800_maria_init_dll_entry(&display_list[32], 8, zone_header, 0);
+#endif
 }
 
 /**
@@ -268,7 +281,7 @@ void atari7800_scene_end_frame(atari7800_scene_t *scene) {
       atari7800_maria_clear_zone(atari7800_scene_zones[zone_index],
                                  ATARI7800_SCENE_ZONE_BYTES);
       atari7800_maria_init_dll_entry(
-          &atari7800_scene_display_list[(uint8_t)(1u + zone_index)], 7u,
+          &atari7800_scene_display_list[(uint8_t)(1u + zone_index)], ATARI7800_ZONE_OFFSET,
           &atari7800_scene_null_zone, 0u);
     }
     atari7800_scene_active_zones_prev[zone_index] =
@@ -302,7 +315,7 @@ uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
     return 1u;
   }
 
-  zone_index = (uint8_t)(y_pos >> 3);
+  zone_index = (uint8_t)(y_pos >> ATARI7800_ZONE_SHIFT);
   if (zone_index >= ATARI7800_SCENE_VISIBLE_ZONES) {
     zone_index = (uint8_t)(ATARI7800_SCENE_VISIBLE_ZONES - 1u);
   }
@@ -317,7 +330,7 @@ uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
 
   if (atari7800_scene_active_zones_curr[zone_index] == 0u) {
     atari7800_maria_init_dll_entry(
-        &atari7800_scene_display_list[(uint8_t)(1u + zone_index)], 7u, zone,
+        &atari7800_scene_display_list[(uint8_t)(1u + zone_index)], ATARI7800_ZONE_OFFSET, zone,
         0u);
   }
 
@@ -396,7 +409,7 @@ uint8_t atari7800_scene_draw_text(atari7800_scene_t *scene,
   }
 
   /* Main optimized drawing loop for initialized scenes */
-  uint8_t zone_index = (uint8_t)(pen_y >> 3);
+  uint8_t zone_index = (uint8_t)(pen_y >> ATARI7800_ZONE_SHIFT);
   if (zone_index >= ATARI7800_SCENE_VISIBLE_ZONES) {
     zone_index = (uint8_t)(ATARI7800_SCENE_VISIBLE_ZONES - 1u);
   }
@@ -406,7 +419,7 @@ uint8_t atari7800_scene_draw_text(atari7800_scene_t *scene,
 
   if (atari7800_scene_active_zones_curr[zone_index] == 0u) {
     atari7800_maria_init_dll_entry(
-        &atari7800_scene_display_list[(uint8_t)(1u + zone_index)], 7u,
+        &atari7800_scene_display_list[(uint8_t)(1u + zone_index)], ATARI7800_ZONE_OFFSET,
         zone, 0u);
     atari7800_scene_active_zones_curr[zone_index] = 1u;
   }
@@ -420,7 +433,7 @@ uint8_t atari7800_scene_draw_text(atari7800_scene_t *scene,
 
       pen_x = start_x;
       pen_y = (uint8_t)(pen_y + line_advance);
-      zone_index = (uint8_t)(pen_y >> 3);
+      zone_index = (uint8_t)(pen_y >> ATARI7800_ZONE_SHIFT);
       if (zone_index >= ATARI7800_SCENE_VISIBLE_ZONES) {
         zone_index = (uint8_t)(ATARI7800_SCENE_VISIBLE_ZONES - 1u);
       }
@@ -430,7 +443,7 @@ uint8_t atari7800_scene_draw_text(atari7800_scene_t *scene,
 
       if (atari7800_scene_active_zones_curr[zone_index] == 0u) {
         atari7800_maria_init_dll_entry(
-            &atari7800_scene_display_list[(uint8_t)(1u + zone_index)], 7u,
+            &atari7800_scene_display_list[(uint8_t)(1u + zone_index)], ATARI7800_ZONE_OFFSET,
             zone, 0u);
         atari7800_scene_active_zones_curr[zone_index] = 1u;
       }

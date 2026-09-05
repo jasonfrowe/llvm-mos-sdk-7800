@@ -76,8 +76,23 @@
 #define ATARI7800_CTRL_DMA_ENABLE 0x40u
 #define ATARI7800_BG_DARKGRAY 0x02u
 
-/* Stable NTSC blank-frame layout (1 top + 28 display + 4 bottom). */
+#ifndef ATARI7800_ZONE_HEIGHT
+#define ATARI7800_ZONE_HEIGHT 8
+#endif
+
+#if ATARI7800_ZONE_HEIGHT == 16
+#define ATARI7800_ZONE_SHIFT 4
+#define ATARI7800_ZONE_OFFSET 0u
+#define ATARI7800_SCENE_VISIBLE_ZONES 14u
+#define ATARI7800_MARIA_NTSC_DLL_ENTRIES 19u
+#elif ATARI7800_ZONE_HEIGHT == 8
+#define ATARI7800_ZONE_SHIFT 3
+#define ATARI7800_ZONE_OFFSET 7u
+#define ATARI7800_SCENE_VISIBLE_ZONES 28u
 #define ATARI7800_MARIA_NTSC_DLL_ENTRIES 33u
+#else
+#error "Unsupported zone height"
+#endif
 
 /* Display list entry flags. */
 #define ATARI7800_DLL_FLAG_NMI 0x80u
@@ -137,7 +152,6 @@ typedef struct atari7800_scene {
 
 #define ATARI7800_MARIA_ZONE5_OBJECT_BYTES 5u
 #define ATARI7800_MARIA_ZONE5_TERMINATOR_BYTES 2u
-#define ATARI7800_SCENE_VISIBLE_ZONES 28u
 #define ATARI7800_SCENE_ZONE_BYTES 64u
 
 static inline uint16_t atari7800_ptr16(const void *ptr) {

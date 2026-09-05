@@ -219,8 +219,8 @@ int main(void) {
     bottom_half.height_lines = 8;
     bottom_half.palette = 5; /* Use Palette 5 (Spaceship) */
 
-    draw_sprite_fine(&top_half, 72, 90);
-    draw_sprite_fine(&bottom_half, 72, 90 + 8);
+    draw_sprite_fine(&top_half, 72, 88);
+    draw_sprite_fine(&bottom_half, 72, 88 + 8);
 
     /* Draw HUD text */
     atari7800_scene_draw_text(&scene, &hud_font, 4, 8, "SHLD:100 L:3");
