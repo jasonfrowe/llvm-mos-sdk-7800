@@ -34,9 +34,14 @@ if(NOT EXISTS "${BUILTINS_DIR}")
     "Builtins directory not found: ${BUILTINS_DIR}")
 endif()
 
-find_library(builtins clang_rt.builtins REQUIRED
-  PATHS ${BUILTINS_DIR}
-  NO_DEFAULT_PATH
-)
+# A plain (non-cache) variable is used here instead of find_library(), since
+# find_library() caches its result in CMakeCache.txt forever. The toolchain is
+# fetched from a mutable "main" release (see cmake/bootstrap-compiler.cmake),
+# so its clang version/resource-dir can change across re-downloads without a
+# fresh configure being forced, which would otherwise leave a stale cached path.
+set(builtins ${BUILTINS_DIR}/libclang_rt.builtins.a)
+if(NOT EXISTS "${builtins}")
+  message(FATAL_ERROR "builtins library not found: ${builtins}")
+endif()
 
 merge_libraries(common-crt ${builtins})
