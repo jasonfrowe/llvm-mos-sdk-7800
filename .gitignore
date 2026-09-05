@@ -7,3 +7,8 @@ build*
 *.rej
 .venv
 docs/
+
+# mame64 (a7800 emulator) working files when run from the repo root
+/a7800/
+/cfg/
+/snap/
