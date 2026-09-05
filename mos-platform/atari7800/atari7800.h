@@ -150,6 +150,27 @@ typedef struct atari7800_scene {
 	uint8_t initialized;
 } atari7800_scene_t;
 
+/* One pre-resolved glyph in a glyph run: which glyph to draw and its pen_x
+ * offset from the run's draw-time x_pos. glyph_index of
+ * ATARI7800_GLYPH_RUN_BLANK marks a skipped cell (originally whitespace),
+ * which costs zero object slots when drawn. */
+#define ATARI7800_GLYPH_RUN_BLANK 0xffu
+
+typedef struct atari7800_glyph_run_entry {
+	uint8_t glyph_index;
+	uint8_t x_offset;
+} atari7800_glyph_run_entry_t;
+
+/* A single-line run of glyphs pre-resolved once (e.g. at startup or whenever
+ * the text changes), so per-frame HUD redraws skip character-to-glyph lookup
+ * and whitespace/newline branching entirely. Build with
+ * atari7800_build_glyph_run(); draw every frame with
+ * atari7800_scene_draw_glyph_run(). */
+typedef struct atari7800_glyph_run {
+	const atari7800_glyph_run_entry_t *entries;
+	uint8_t count;
+} atari7800_glyph_run_t;
+
 #define ATARI7800_MARIA_ZONE5_OBJECT_BYTES 5u
 #define ATARI7800_MARIA_ZONE5_TERMINATOR_BYTES 2u
 #define ATARI7800_SCENE_ZONE_BYTES 64u
@@ -213,6 +234,12 @@ uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
 uint8_t atari7800_scene_draw_text(atari7800_scene_t *scene,
 		const atari7800_font_descriptor_t *font,
 		uint8_t x_pos, uint8_t y_pos, const char *text);
+uint8_t atari7800_build_glyph_run(const atari7800_font_descriptor_t *font,
+		const char *text, atari7800_glyph_run_entry_t *entries,
+		uint8_t max_entries, atari7800_glyph_run_t *out_run);
+uint8_t atari7800_scene_draw_glyph_run(atari7800_scene_t *scene,
+		const atari7800_font_descriptor_t *font, uint8_t x_pos,
+		uint8_t y_pos, const atari7800_glyph_run_t *run);
 
 /* 7800basic-style convenience wrappers. */
 static inline void atari7800_clearscreen(uint8_t *zone, uint16_t zone_size) {

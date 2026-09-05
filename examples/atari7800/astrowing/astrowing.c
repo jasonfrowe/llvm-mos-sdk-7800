@@ -57,6 +57,11 @@ static int8_t scroll_y = 0;
 /* Scene context global */
 static atari7800_scene_t scene;
 
+/* HUD text is resolved into a glyph run once at startup instead of being
+ * re-parsed every frame; the hot loop just blits the pre-resolved glyphs. */
+static atari7800_glyph_run_entry_t hud_glyph_entries[16];
+static atari7800_glyph_run_t hud_glyph_run;
+
 void init_stars(void) {
   uint8_t i;
   for (i = 0; i < 4; ++i) {
@@ -190,6 +195,10 @@ int main(void) {
 
   init_stars();
 
+  atari7800_build_glyph_run(&hud_font, "SHLD:100 L:3", hud_glyph_entries,
+      (uint8_t)(sizeof(hud_glyph_entries) / sizeof(hud_glyph_entries[0])),
+      &hud_glyph_run);
+
   for (;;) {
     atari7800_wait_vblank();
     frame_count++;
@@ -222,8 +231,8 @@ int main(void) {
     draw_sprite_fine(&top_half, 72, 88);
     draw_sprite_fine(&bottom_half, 72, 88 + 8);
 
-    /* Draw HUD text */
-    atari7800_scene_draw_text(&scene, &hud_font, 4, 8, "SHLD:100 L:3");
+    /* Draw HUD text (pre-resolved glyph run; no runtime string parsing) */
+    atari7800_scene_draw_glyph_run(&scene, &hud_font, 4, 8, &hud_glyph_run);
 
     atari7800_scene_end_frame(&scene);
   }

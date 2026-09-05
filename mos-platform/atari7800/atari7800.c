@@ -497,3 +497,149 @@ uint8_t atari7800_scene_draw_text(atari7800_scene_t *scene,
   atari7800_scene_zone_next_object[zone_index] = object_index;
   return 1u;
 }
+
+/**
+ * Resolves a single-line string into a glyph run once (e.g. at startup, or
+ * whenever the displayed text changes) so that per-frame redraws can skip
+ * character-to-glyph lookup and whitespace/newline branching entirely.
+ * Stops at the first '\n' or the string terminator; use one run per line
+ * for multi-line HUD text.
+ */
+uint8_t atari7800_build_glyph_run(const atari7800_font_descriptor_t *font,
+                                  const char *text,
+                                  atari7800_glyph_run_entry_t *entries,
+                                  uint8_t max_entries,
+                                  atari7800_glyph_run_t *out_run) {
+  uint8_t pen_x = 0;
+  uint8_t count = 0;
+
+  if (font == 0 || text == 0 || entries == 0 || out_run == 0 ||
+      font->glyph_count == 0u || font->glyph_advance == 0u) {
+    return 0u;
+  }
+
+  const uint8_t glyph_advance = font->glyph_advance;
+  const uint8_t space_advance =
+      (font->space_advance != 0u) ? font->space_advance : font->glyph_advance;
+  const uint8_t * const char_to_glyph = font->char_to_glyph;
+  const uint8_t char_to_glyph_len = font->char_to_glyph_len;
+  const uint8_t first_char = font->first_char;
+  const uint8_t glyph_count = font->glyph_count;
+
+  while (*text != '\0' && *text != '\n') {
+    const uint8_t ch = (uint8_t)*text;
+
+    if (ch == (uint8_t)' ') {
+      pen_x = (uint8_t)(pen_x + space_advance);
+      ++text;
+      continue;
+    }
+
+    {
+      uint8_t glyph_index = ATARI7800_GLYPH_RUN_BLANK;
+
+      if (char_to_glyph != 0 && ch < char_to_glyph_len) {
+        glyph_index = char_to_glyph[ch];
+      } else if (ch >= first_char) {
+        glyph_index = (uint8_t)(ch - first_char);
+      }
+
+      if (glyph_index < glyph_count) {
+        if (count >= max_entries) {
+          return 0u;
+        }
+        entries[count].glyph_index = glyph_index;
+        entries[count].x_offset = pen_x;
+        ++count;
+      }
+    }
+
+    pen_x = (uint8_t)(pen_x + glyph_advance);
+    ++text;
+  }
+
+  out_run->entries = entries;
+  out_run->count = count;
+  return 1u;
+}
+
+/**
+ * Draws a pre-resolved glyph run at coordinates (x, y). This is the hot-loop
+ * counterpart to atari7800_build_glyph_run(): no character lookup, no
+ * whitespace/newline handling, just direct 5-byte object header writes,
+ * matching the optimized inner loop of atari7800_scene_draw_text().
+ */
+uint8_t atari7800_scene_draw_glyph_run(atari7800_scene_t *scene,
+                                       const atari7800_font_descriptor_t *font,
+                                       uint8_t x_pos, uint8_t y_pos,
+                                       const atari7800_glyph_run_t *run) {
+  uint8_t i;
+
+  if (scene == 0 || font == 0 || run == 0 || font->data == 0 ||
+      run->entries == 0) {
+    return 0u;
+  }
+
+  const uint16_t font_data_addr = atari7800_ptr16(font->data);
+  const uint8_t glyph_mode = font->glyph_mode;
+  const uint8_t pal_width =
+      atari7800_maria_pal_width(font->glyph_palette, font->glyph_width_twos_comp);
+  const uint8_t count = run->count;
+  const atari7800_glyph_run_entry_t * const entries = run->entries;
+
+  if (scene->initialized == 0u) {
+    for (i = 0; i < count; ++i) {
+      uint16_t sprite_addr =
+          font_data_addr + ((uint16_t)entries[i].glyph_index << 1);
+      const uint8_t obj_idx = scene->next_object;
+      if (!atari7800_maria_plot_sprite_zone5(
+              scene->zone, scene->zone_size, obj_idx, sprite_addr, glyph_mode,
+              font->glyph_palette, font->glyph_width_twos_comp,
+              (uint8_t)(x_pos + entries[i].x_offset))) {
+        return 0u;
+      }
+      scene->next_object = (uint8_t)(scene->next_object + 1u);
+    }
+    return 1u;
+  }
+
+  uint8_t zone_index = (uint8_t)(y_pos >> ATARI7800_ZONE_SHIFT);
+  if (zone_index >= ATARI7800_SCENE_VISIBLE_ZONES) {
+    zone_index = (uint8_t)(ATARI7800_SCENE_VISIBLE_ZONES - 1u);
+  }
+  uint8_t *zone = atari7800_scene_zones[zone_index];
+  uint8_t object_index = atari7800_scene_zone_next_object[zone_index];
+  uint8_t start_offset = (uint8_t)(object_index * 5u);
+
+  if (atari7800_scene_active_zones_curr[zone_index] == 0u) {
+    atari7800_maria_init_dll_entry(
+        &atari7800_scene_display_list[(uint8_t)(1u + zone_index)],
+        ATARI7800_ZONE_OFFSET, zone, 0u);
+    atari7800_scene_active_zones_curr[zone_index] = 1u;
+  }
+
+  for (i = 0; i < count; ++i) {
+    uint16_t sprite_addr =
+        font_data_addr + ((uint16_t)entries[i].glyph_index << 1);
+    const uint8_t end = (uint8_t)(start_offset + 7u);
+
+    if (end > ATARI7800_SCENE_ZONE_BYTES) {
+      atari7800_scene_zone_next_object[zone_index] = object_index;
+      return 0u;
+    }
+
+    zone[start_offset] = (uint8_t)(sprite_addr & 0xffu);
+    zone[start_offset + 1] = glyph_mode;
+    zone[start_offset + 2] = (uint8_t)(sprite_addr >> 8);
+    zone[start_offset + 3] = pal_width;
+    zone[start_offset + 4] = (uint8_t)(x_pos + entries[i].x_offset);
+    zone[start_offset + 5] = 0x00u;
+    zone[start_offset + 6] = 0x00u;
+
+    object_index = (uint8_t)(object_index + 1u);
+    start_offset = (uint8_t)(start_offset + 5u);
+  }
+
+  atari7800_scene_zone_next_object[zone_index] = object_index;
+  return 1u;
+}
