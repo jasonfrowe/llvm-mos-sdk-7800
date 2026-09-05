@@ -62,6 +62,19 @@ static atari7800_scene_t scene;
 static atari7800_glyph_run_entry_t hud_glyph_entries[16];
 static atari7800_glyph_run_t hud_glyph_run;
 
+/* Saturating counter of dropped draws (status != ATARI7800_OK) from any
+ * scene zone. Harmless for stars (a missed star this frame is invisible),
+ * but a nonzero count from the ship or HUD draws would mean a zone is
+ * genuinely over budget and needs attention. Inspect via the emulator's
+ * memory/watch view; not surfaced on screen. */
+static uint8_t budget_drops = 0;
+
+static void note_status(uint8_t status) {
+  if (status != ATARI7800_OK && budget_drops < 0xffu) {
+    ++budget_drops;
+  }
+}
+
 void init_stars(void) {
   uint8_t i;
   for (i = 0; i < 4; ++i) {
@@ -175,8 +188,8 @@ void draw_sprite_fine(const atari7800_sprite_asset_t *asset, uint8_t x, uint8_t 
   uint8_t y_offset = y & 7;
   atari7800_sprite_asset_t shifted_asset = *asset;
   shifted_asset.data = (const uint8_t *)((uintptr_t)shifted_asset.data + ((uint16_t)y_offset << 8));
-  
-  atari7800_scene_draw_sprite(&scene, &shifted_asset, x, y);
+
+  note_status(atari7800_scene_draw_sprite(&scene, &shifted_asset, x, y));
 }
 
 int main(void) {
@@ -195,9 +208,12 @@ int main(void) {
 
   init_stars();
 
-  atari7800_build_glyph_run(&hud_font, "SHLD:100 L:3", hud_glyph_entries,
+  /* A non-OK status here means hud_glyph_entries is sized too small for the
+   * HUD string -- a build-time bug, not a runtime budget issue. */
+  note_status(atari7800_build_glyph_run(&hud_font, "SHLD:100 L:3",
+      hud_glyph_entries,
       (uint8_t)(sizeof(hud_glyph_entries) / sizeof(hud_glyph_entries[0])),
-      &hud_glyph_run);
+      &hud_glyph_run));
 
   for (;;) {
     atari7800_wait_vblank();
@@ -232,7 +248,7 @@ int main(void) {
     draw_sprite_fine(&bottom_half, 72, 88 + 8);
 
     /* Draw HUD text (pre-resolved glyph run; no runtime string parsing) */
-    atari7800_scene_draw_glyph_run(&scene, &hud_font, 4, 8, &hud_glyph_run);
+    note_status(atari7800_scene_draw_glyph_run(&scene, &hud_font, 4, 8, &hud_glyph_run));
 
     atari7800_scene_end_frame(&scene);
   }

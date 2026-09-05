@@ -117,6 +117,17 @@ typedef struct __attribute__((packed)) atari7800_palette3 {
 #define ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED 0u
 #define ATARI7800_SPRITE_LAYOUT_CONTIGUOUS_160A 1u
 
+/* Explicit status codes returned by the sprite/text/glyph-run draw calls
+ * below, in place of a plain success/fail boolean (note the flipped
+ * convention vs. that older boolean: 0 now means success). Callers that
+ * need to react differently to an over-budget zone/buffer (e.g. stop
+ * trying to add more objects to it this frame) versus a programming
+ * error (null pointers, empty font) can compare against these directly
+ * instead of only knowing that "something" failed. */
+#define ATARI7800_OK              0u
+#define ATARI7800_ERR_INVALID     1u
+#define ATARI7800_ERR_BUDGET_FULL 2u
+
 typedef struct atari7800_sprite_asset {
 	const uint8_t *data;
 	uint8_t width_bytes;
@@ -217,9 +228,13 @@ void atari7800_maria_build_blank_ntsc(atari7800_maria_dll_entry_t *display_list,
 		const atari7800_maria_null_header_t *zone_header);
 void atari7800_set_palette3(uint8_t palette_index, atari7800_palette3_t colors);
 void atari7800_maria_clear_zone(uint8_t *zone, uint16_t zone_size);
+/* Returns ATARI7800_OK, or ATARI7800_ERR_BUDGET_FULL if the object plus its
+ * terminator bytes would not fit in zone_size. */
 uint8_t atari7800_maria_plot_sprite_zone5(uint8_t *zone, uint16_t zone_size,
 		uint8_t object_index, uint16_t sprite_addr, uint8_t mode,
 		uint8_t palette, uint8_t width_twos_comp, uint8_t x_pos);
+/* Returns ATARI7800_OK, ATARI7800_ERR_INVALID (null/empty asset), or
+ * ATARI7800_ERR_BUDGET_FULL (see atari7800_maria_plot_sprite_zone5). */
 uint8_t atari7800_maria_plot_sprite_asset_zone5(uint8_t *zone,
 		uint16_t zone_size, uint8_t object_index,
 		const atari7800_sprite_asset_t *asset, uint8_t x_pos);
@@ -228,15 +243,26 @@ void atari7800_scene_set_palette(atari7800_scene_t *scene,
 		uint8_t palette_index, atari7800_palette3_t colors);
 void atari7800_scene_begin_frame(atari7800_scene_t *scene);
 void atari7800_scene_end_frame(atari7800_scene_t *scene);
+/* Returns ATARI7800_OK, ATARI7800_ERR_INVALID (null scene/asset), or
+ * ATARI7800_ERR_BUDGET_FULL if the sprite's zone has no room left for it. */
 uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
 		const atari7800_sprite_asset_t *asset, uint8_t x_pos,
 		uint8_t y_pos);
+/* Returns ATARI7800_OK, ATARI7800_ERR_INVALID (bad args/empty font), or
+ * ATARI7800_ERR_BUDGET_FULL if a zone ran out of room mid-string (any
+ * glyphs already written before that point remain drawn). */
 uint8_t atari7800_scene_draw_text(atari7800_scene_t *scene,
 		const atari7800_font_descriptor_t *font,
 		uint8_t x_pos, uint8_t y_pos, const char *text);
+/* Returns ATARI7800_OK, ATARI7800_ERR_INVALID (bad args/empty font), or
+ * ATARI7800_ERR_BUDGET_FULL if the string needs more than max_entries
+ * glyphs (out_run is left untouched in that case). */
 uint8_t atari7800_build_glyph_run(const atari7800_font_descriptor_t *font,
 		const char *text, atari7800_glyph_run_entry_t *entries,
 		uint8_t max_entries, atari7800_glyph_run_t *out_run);
+/* Returns ATARI7800_OK, ATARI7800_ERR_INVALID (bad args), or
+ * ATARI7800_ERR_BUDGET_FULL if a zone ran out of room mid-run (any
+ * glyphs already written before that point remain drawn). */
 uint8_t atari7800_scene_draw_glyph_run(atari7800_scene_t *scene,
 		const atari7800_font_descriptor_t *font, uint8_t x_pos,
 		uint8_t y_pos, const atari7800_glyph_run_t *run);

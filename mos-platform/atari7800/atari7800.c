@@ -179,7 +179,7 @@ uint8_t atari7800_maria_plot_sprite_zone5(uint8_t *zone, uint16_t zone_size,
       ATARI7800_MARIA_ZONE5_TERMINATOR_BYTES;
 
   if (end > zone_size) {
-    return 0u;
+    return ATARI7800_ERR_BUDGET_FULL;
   }
 
   zone[start] = (uint8_t)(sprite_addr & 0xffu);
@@ -190,7 +190,7 @@ uint8_t atari7800_maria_plot_sprite_zone5(uint8_t *zone, uint16_t zone_size,
   zone[(uint16_t)(start + 4u)] = x_pos;
   zone[(uint16_t)(start + 5u)] = 0x00u;
   zone[(uint16_t)(start + 6u)] = 0x00u;
-  return 1u;
+  return ATARI7800_OK;
 }
 
 /**
@@ -202,7 +202,7 @@ uint8_t atari7800_maria_plot_sprite_asset_zone5(
   uint16_t sprite_addr;
 
   if (asset == 0 || asset->data == 0) {
-    return 0u;
+    return ATARI7800_ERR_INVALID;
   }
 
   sprite_addr = atari7800_ptr16(asset->data);
@@ -300,19 +300,21 @@ uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
   uint8_t zone_index;
   uint8_t object_index;
   uint8_t *zone;
+  uint8_t status;
 
   if (scene == 0 || asset == 0) {
-    return 0u;
+    return ATARI7800_ERR_INVALID;
   }
 
   if (scene->initialized == 0u) {
     object_index = scene->next_object;
-    if (!atari7800_plotsprite_asset(scene->zone, scene->zone_size, object_index,
-                                    asset, x_pos)) {
-      return 0u;
+    status = atari7800_plotsprite_asset(scene->zone, scene->zone_size,
+                                        object_index, asset, x_pos);
+    if (status != ATARI7800_OK) {
+      return status;
     }
     scene->next_object = (uint8_t)(scene->next_object + 1u);
-    return 1u;
+    return ATARI7800_OK;
   }
 
   zone_index = (uint8_t)(y_pos >> ATARI7800_ZONE_SHIFT);
@@ -323,9 +325,10 @@ uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
   zone = atari7800_scene_zones[zone_index];
   object_index = atari7800_scene_zone_next_object[zone_index];
 
-  if (!atari7800_plotsprite_asset(zone, ATARI7800_SCENE_ZONE_BYTES,
-                                  object_index, asset, x_pos)) {
-    return 0u;
+  status = atari7800_plotsprite_asset(zone, ATARI7800_SCENE_ZONE_BYTES,
+                                      object_index, asset, x_pos);
+  if (status != ATARI7800_OK) {
+    return status;
   }
 
   if (atari7800_scene_active_zones_curr[zone_index] == 0u) {
@@ -336,7 +339,7 @@ uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
 
   atari7800_scene_zone_next_object[zone_index] = (uint8_t)(object_index + 1u);
   atari7800_scene_active_zones_curr[zone_index] = 1u;
-  return 1u;
+  return ATARI7800_OK;
 }
 
 /**
@@ -355,7 +358,7 @@ uint8_t atari7800_scene_draw_text(atari7800_scene_t *scene,
 
   if (scene == 0 || font == 0 || text == 0 || font->data == 0 ||
       font->glyph_count == 0u || font->glyph_advance == 0u) {
-    return 0u;
+    return ATARI7800_ERR_INVALID;
   }
 
   /* Cache font properties into local variables (fast register allocation) */
@@ -394,18 +397,18 @@ uint8_t atari7800_scene_draw_text(atari7800_scene_t *scene,
       if (glyph_index < glyph_count) {
         uint16_t sprite_addr = font_data_addr + ((uint16_t)glyph_index << 1);
         const uint8_t obj_idx = scene->next_object;
-        if (!atari7800_maria_plot_sprite_zone5(scene->zone, scene->zone_size,
-                                               obj_idx, sprite_addr,
-                                               glyph_mode, font->glyph_palette,
-                                               font->glyph_width_twos_comp, pen_x)) {
-          return 0u;
+        const uint8_t status = atari7800_maria_plot_sprite_zone5(
+            scene->zone, scene->zone_size, obj_idx, sprite_addr, glyph_mode,
+            font->glyph_palette, font->glyph_width_twos_comp, pen_x);
+        if (status != ATARI7800_OK) {
+          return status;
         }
         scene->next_object = (uint8_t)(scene->next_object + 1u);
       }
       pen_x = (uint8_t)(pen_x + glyph_advance);
       ++text;
     }
-    return 1u;
+    return ATARI7800_OK;
   }
 
   /* Main optimized drawing loop for initialized scenes */
@@ -473,7 +476,7 @@ uint8_t atari7800_scene_draw_text(atari7800_scene_t *scene,
         const uint8_t end = (uint8_t)(start_offset + 7u);
         if (end > ATARI7800_SCENE_ZONE_BYTES) {
           atari7800_scene_zone_next_object[zone_index] = object_index;
-          return 0u;
+          return ATARI7800_ERR_BUDGET_FULL;
         }
 
         zone[start_offset] = (uint8_t)(sprite_addr & 0xffu);
@@ -495,7 +498,7 @@ uint8_t atari7800_scene_draw_text(atari7800_scene_t *scene,
 
   /* Write back final zone's object cursor */
   atari7800_scene_zone_next_object[zone_index] = object_index;
-  return 1u;
+  return ATARI7800_OK;
 }
 
 /**
@@ -515,7 +518,7 @@ uint8_t atari7800_build_glyph_run(const atari7800_font_descriptor_t *font,
 
   if (font == 0 || text == 0 || entries == 0 || out_run == 0 ||
       font->glyph_count == 0u || font->glyph_advance == 0u) {
-    return 0u;
+    return ATARI7800_ERR_INVALID;
   }
 
   const uint8_t glyph_advance = font->glyph_advance;
@@ -546,7 +549,7 @@ uint8_t atari7800_build_glyph_run(const atari7800_font_descriptor_t *font,
 
       if (glyph_index < glyph_count) {
         if (count >= max_entries) {
-          return 0u;
+          return ATARI7800_ERR_BUDGET_FULL;
         }
         entries[count].glyph_index = glyph_index;
         entries[count].x_offset = pen_x;
@@ -560,7 +563,7 @@ uint8_t atari7800_build_glyph_run(const atari7800_font_descriptor_t *font,
 
   out_run->entries = entries;
   out_run->count = count;
-  return 1u;
+  return ATARI7800_OK;
 }
 
 /**
@@ -577,7 +580,7 @@ uint8_t atari7800_scene_draw_glyph_run(atari7800_scene_t *scene,
 
   if (scene == 0 || font == 0 || run == 0 || font->data == 0 ||
       run->entries == 0) {
-    return 0u;
+    return ATARI7800_ERR_INVALID;
   }
 
   const uint16_t font_data_addr = atari7800_ptr16(font->data);
@@ -592,15 +595,16 @@ uint8_t atari7800_scene_draw_glyph_run(atari7800_scene_t *scene,
       uint16_t sprite_addr =
           font_data_addr + ((uint16_t)entries[i].glyph_index << 1);
       const uint8_t obj_idx = scene->next_object;
-      if (!atari7800_maria_plot_sprite_zone5(
-              scene->zone, scene->zone_size, obj_idx, sprite_addr, glyph_mode,
-              font->glyph_palette, font->glyph_width_twos_comp,
-              (uint8_t)(x_pos + entries[i].x_offset))) {
-        return 0u;
+      const uint8_t status = atari7800_maria_plot_sprite_zone5(
+          scene->zone, scene->zone_size, obj_idx, sprite_addr, glyph_mode,
+          font->glyph_palette, font->glyph_width_twos_comp,
+          (uint8_t)(x_pos + entries[i].x_offset));
+      if (status != ATARI7800_OK) {
+        return status;
       }
       scene->next_object = (uint8_t)(scene->next_object + 1u);
     }
-    return 1u;
+    return ATARI7800_OK;
   }
 
   uint8_t zone_index = (uint8_t)(y_pos >> ATARI7800_ZONE_SHIFT);
@@ -625,7 +629,7 @@ uint8_t atari7800_scene_draw_glyph_run(atari7800_scene_t *scene,
 
     if (end > ATARI7800_SCENE_ZONE_BYTES) {
       atari7800_scene_zone_next_object[zone_index] = object_index;
-      return 0u;
+      return ATARI7800_ERR_BUDGET_FULL;
     }
 
     zone[start_offset] = (uint8_t)(sprite_addr & 0xffu);
@@ -641,5 +645,5 @@ uint8_t atari7800_scene_draw_glyph_run(atari7800_scene_t *scene,
   }
 
   atari7800_scene_zone_next_object[zone_index] = object_index;
-  return 1u;
+  return ATARI7800_OK;
 }
