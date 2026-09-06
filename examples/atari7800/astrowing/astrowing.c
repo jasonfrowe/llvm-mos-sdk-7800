@@ -227,6 +227,15 @@ int main(void) {
     atari7800_wait_vblank();
     frame_count++;
 
+#ifdef ATARI7800_DEBUG_FRAME_BUDGET
+    /* Marks the start of this frame's CPU work with a bright background
+     * flash. If per-frame work overruns the vblank window, this color
+     * bleeds into the top of the visible screen as a bar instead of
+     * staying hidden -- each visible scanline of bleed is roughly one
+     * NTSC scanline's worth of cycles (~113 cycles) over budget. */
+    ATARI7800_BACKGRND = 0x0fu;
+#endif
+
     update_player_input();
     apply_friction();
     update_scrolling();
@@ -259,5 +268,11 @@ int main(void) {
      * draw here every frame. */
 
     atari7800_scene_end_frame(&scene);
+
+#ifdef ATARI7800_DEBUG_FRAME_BUDGET
+    /* Marks the end of this frame's CPU work: restore the real background
+     * color before the next atari7800_wait_vblank() call above. */
+    ATARI7800_BACKGRND = ATARI7800_BG_DARKGRAY;
+#endif
   }
 }
