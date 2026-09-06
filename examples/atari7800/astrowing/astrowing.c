@@ -21,14 +21,35 @@ static const int16_t cos_table[16] = {
   24, 24, 16, 8, 0, -8, -16, -24, -24, -24, -16, -8, 0, 8, 16, 24
 };
 
-/* Page-aligned 1-pixel star sprite (8 pages data + 8 pages padding) */
+/* Page-aligned 1-pixel star sprite. A single Direct Mode object only
+ * renders ~8 scanlines regardless of the containing zone's declared
+ * height (confirmed empirically -- see the ship sprite below and
+ * 7800port.md), so positioning a star anywhere within a 16-line zone
+ * needs TWO reference points, one per 8-line half, each supporting the
+ * same 0-7 fine-shift trick draw_sprite_fine already does via y&7:
+ *   - pages 0-6: leading padding, page 7: pixel (bottom-half reference)
+ *   - pages 8-14: padding (doubles as the top half's leading padding),
+ *     page 15: pixel (top-half reference), pages 16-22: trailing padding
+ * See star_sprite (bottom half, y&15 < 8) and star_sprite_upper (top
+ * half, y&15 >= 8) below; the call site picks between them. */
 static const uint8_t star_sprite_data[] __attribute__((aligned(256))) = {
-  [1792] = 0x40, /* Row 0 of Page 7 contains the pixel */
-  [3839] = 0x00  /* Pad up to 15 pages (3840 bytes) to allow up to 7 scanlines shift */
+  [1792] = 0x40, /* Page 7: bottom-half pixel */
+  [3840] = 0x40, /* Page 15: top-half pixel */
+  [5887] = 0x00  /* Pad up to 23 pages (5888 bytes) */
 };
 
 static const atari7800_sprite_asset_t star_sprite = {
   .data = star_sprite_data,
+  .width_bytes = 1u,
+  .height_lines = 8u,
+  .mode = 0x40u,
+  .palette = 4u,
+  .width_twos_comp = 0x1fu,
+  .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED
+};
+
+static const atari7800_sprite_asset_t star_sprite_upper = {
+  .data = &star_sprite_data[8 * 256],
   .width_bytes = 1u,
   .height_lines = 8u,
   .mode = 0x40u,
@@ -86,7 +107,8 @@ static atari7800_scene_object_t star_objs[4] = {
 /* spaceship_frames[] is natively 16 lines tall (SPACESHIP_HEIGHT_LINES);
  * under 16-line zones it fits in a single zone/object instead of the two
  * 8-line halves 8-line zones required. */
-static atari7800_scene_object_t ship_obj = ATARI7800_SCENE_OBJECT_INIT;
+static atari7800_scene_object_t ship_top_obj = ATARI7800_SCENE_OBJECT_INIT;
+static atari7800_scene_object_t ship_bottom_obj = ATARI7800_SCENE_OBJECT_INIT;
 static atari7800_scene_object_t enemy_obj = ATARI7800_SCENE_OBJECT_INIT;
 
 /* HUD text is resolved into a glyph run once at startup instead of being
@@ -307,20 +329,33 @@ int main(void) {
      * persistent object stays displayed until told otherwise. */
     for (i = 0; i < 4; ++i) {
       if (stars[i].y >= 16) {
-        draw_sprite_fine(&star_objs[i], &star_sprite, stars[i].x, stars[i].y);
+        /* Pick the reference matching which half of the 16-line zone this
+         * star falls in -- see star_sprite/star_sprite_upper above. */
+        const atari7800_sprite_asset_t *star_ref =
+            ((stars[i].y & 15u) < 8u) ? &star_sprite : &star_sprite_upper;
+        draw_sprite_fine(&star_objs[i], star_ref, stars[i].x, stars[i].y);
       } else {
         atari7800_scene_hide_sprite(&star_objs[i]);
       }
     }
 
-    /* Draw player spaceship: natively 16 lines tall, fits one 16-line
-     * zone/object directly -- no more manual top/bottom split. Y=80 is
-     * 16-line-zone-aligned (80/16=5); the ship doesn't actually move
-     * (the world scrolls around it), so no fine-Y padding is needed. */
-    atari7800_sprite_asset_t ship_asset = spaceship_frames[angle];
-    ship_asset.palette = 5; /* Use Palette 5 (Spaceship) */
+    /* Draw player spaceship (16 lines high). A single Direct Mode object
+     * empirically only renders ~8 scanlines regardless of the containing
+     * zone's declared height (confirmed by A/B testing against 7800basic's
+     * own object model), so this still needs two stacked 8-line objects --
+     * 16-line zones just mean both can now live in the *same* zone instead
+     * of needing two separate zones like they did under 8-line zones. */
+    atari7800_sprite_asset_t top_half = spaceship_frames[angle];
+    top_half.height_lines = 8;
+    top_half.palette = 5; /* Use Palette 5 (Spaceship) */
+    top_half.data = (const uint8_t *)((uintptr_t)top_half.data + 8 * 256);
 
-    draw_sprite_fine(&ship_obj, &ship_asset, 72, 80);
+    atari7800_sprite_asset_t bottom_half = spaceship_frames[angle];
+    bottom_half.height_lines = 8;
+    bottom_half.palette = 5; /* Use Palette 5 (Spaceship) */
+
+    draw_sprite_fine(&ship_top_obj, &top_half, 72, 80);
+    draw_sprite_fine(&ship_bottom_obj, &bottom_half, 72, 88);
 
     /* Enemy: fighter_sprite has no fine-Y padding (unlike star_sprite_data
      * / spaceship_data), so it's drawn at a fixed, zone-aligned Y with
