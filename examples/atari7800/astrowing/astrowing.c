@@ -20,36 +20,28 @@ static const int16_t cos_table[16] = {
   24, 24, 16, 8, 0, -8, -16, -24, -24, -24, -16, -8, 0, 8, 16, 24
 };
 
-/* Page-aligned 1-pixel star sprite, with two reference points (one per
- * 8-line half of the 16-line zone) so draw_sprite_fine's y&7 shift trick
- * can position it anywhere. This predates a since-fixed platform bug
- * (see 7800port.md, "Fix ATARI7800_ZONE_HEIGHT actually taking effect") --
- * a single reference with a y&15 shift would likely work fine now that
- * zones are genuinely 16 lines tall, but this two-reference form is
- * proven correct and hasn't been revisited yet:
- *   - pages 0-6: leading padding, page 7: pixel (bottom-half reference)
- *   - pages 8-14: padding (doubles as the top half's leading padding),
- *     page 15: pixel (top-half reference), pages 16-22: trailing padding
- * See star_sprite (bottom half, y&15 < 8) and star_sprite_upper (top
- * half, y&15 >= 8) below; the call site picks between them. */
-static const uint8_t star_sprite_data[] __attribute__((aligned(256))) = {
-  [1792] = 0x40, /* Page 7: bottom-half pixel */
-  [3840] = 0x40, /* Page 15: top-half pixel */
-  [5887] = 0x00  /* Pad up to 23 pages (5888 bytes) */
+/* Page-aligned 1-pixel star sprite with a single reference point, positioned
+ * anywhere in its 16-line zone via draw_sprite_fine's y&15 shift trick (see
+ * fighter_sprite_data's comment in fighter.sprite.h for the underlying
+ * "vertically flipped scanline countdown" mechanism this relies on -- the
+ * same relationship generalized from the platform's old, broken 8-line
+ * zones: pixel at the LAST page, shift range covering the full zone
+ * height). A single Direct Mode object's render window always spans the
+ * *zone's* full declared height (16 pages here) regardless of the object's
+ * own declared height_lines, no matter which shift is used -- this used to
+ * be two separate 8-line-window references (one per zone half) to work
+ * around a since-fixed platform bug where zones were secretly only 8 lines
+ * tall; with real 16-line zones, both references' windows always spanned
+ * both pixels at once, doubling every star. Needs pages 0-30 (shift ranges
+ * 0-15, window is [shift, shift+15], so the pixel at page 15 must stay
+ * reachable up to shift=15 i.e. window [15,30]) -- pages 16-30 are explicit
+ * trailing padding, not reachable ROM garbage. */
+static const uint8_t star_sprite_data[31 * 256] __attribute__((aligned(256))) = {
+  [15 * 256] = 0x40, /* Page 15: pixel */
 };
 
 static const atari7800_sprite_asset_t star_sprite = {
   .data = star_sprite_data,
-  .width_bytes = 1u,
-  .height_lines = 8u,
-  .mode = 0x40u,
-  .palette = 4u,
-  .width_twos_comp = 0x1fu,
-  .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED
-};
-
-static const atari7800_sprite_asset_t star_sprite_upper = {
-  .data = &star_sprite_data[8 * 256],
   .width_bytes = 1u,
   .height_lines = 8u,
   .mode = 0x40u,
@@ -245,9 +237,11 @@ void shift_stars(void) {
   }
 }
 
-/* Draws a sprite with pixel-fine vertical positioning inside its zone. */
+/* Draws a sprite with pixel-fine vertical positioning inside its zone.
+ * Shift range matches the full 16-line zone height (y&15, not y&7) -- see
+ * star_sprite_data's comment above for why. */
 void draw_sprite_fine(const atari7800_sprite_asset_t *asset, uint8_t x, uint8_t y) {
-  uint8_t y_offset = y & 7;
+  uint8_t y_offset = y & 15;
   atari7800_sprite_asset_t shifted_asset = *asset;
   shifted_asset.data = (const uint8_t *)((uintptr_t)shifted_asset.data + ((uint16_t)y_offset << 8));
 
@@ -329,11 +323,7 @@ int main(void) {
      * zone clean. */
     for (i = 0; i < 4; ++i) {
       if (stars[i].y >= 16) {
-        /* Pick the reference matching which half of the 16-line zone this
-         * star falls in -- see star_sprite/star_sprite_upper above. */
-        const atari7800_sprite_asset_t *star_ref =
-            ((stars[i].y & 15u) < 8u) ? &star_sprite : &star_sprite_upper;
-        draw_sprite_fine(star_ref, stars[i].x, stars[i].y);
+        draw_sprite_fine(&star_sprite, stars[i].x, stars[i].y);
       }
     }
 

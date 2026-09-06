@@ -4,8 +4,17 @@
 #include <stdint.h>
 #include <atari7800.h>
 
-/* Fighter Sprite Data (Strided layout - vertically flipped for MARIA scanline countdown) */
-static const uint8_t fighter_sprite_data[] __attribute__((aligned(256))) = {
+/* Fighter Sprite Data (Strided layout - vertically flipped for MARIA scanline
+ * countdown). Explicitly sized to 16 pages (4096 bytes) rather than letting
+ * the initializer list imply a size covering only the real 8 pages: a
+ * 16-line zone's Direct Mode object genuinely reads all 16 pages regardless
+ * of this sprite's own 8-line height, so the extra 8 pages must be explicit
+ * zero bytes (rendering as blank) rather than whatever ROM bytes happen to
+ * follow a shorter array -- otherwise they show up as a stray garbage line.
+ * The extra pages are harmless in an 8-line zone (e.g. asset-bridge-demo,
+ * which doesn't override ATARI7800_ZONE_HEIGHT): only the first 8 ever get
+ * read there. */
+static const uint8_t fighter_sprite_data[4096] __attribute__((aligned(256))) = {
     [1792] = 0x00, 0x00,
     [1536] = 0x02, 0x40,
     [1280] = 0x0a, 0x50,
@@ -26,8 +35,12 @@ static const atari7800_sprite_asset_t fighter_sprite = {
     .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED,
 };
 
-/* Unified Font Data (Strided layout: 8 pages of 256 bytes) */
-static const uint8_t hud_font_data[] __attribute__((aligned(256))) = {
+/* Unified Font Data (Strided layout: 8 real pages of 256 bytes, explicitly
+ * sized to 16 pages -- see the comment on fighter_sprite_data above for why:
+ * the HUD's glyphs live in a 16-line zone (astrowing.c), so a genuine
+ * 16-line object read needs 8 explicit trailing zero pages instead of
+ * reading whatever ROM bytes happen to follow a shorter array. */
+static const uint8_t hud_font_data[4096] __attribute__((aligned(256))) = {
     /* Page 7 (offset 1792) */
     [1792] = 0x05, 0x50, 0x01, 0x40, 0x05, 0x50, 0x15, 0x54, 0x00, 0x50, 0x15, 0x54,
     0x05, 0x50, 0x15, 0x54, 0x05, 0x50, 0x05, 0x50, 0x00, 0x00, 0x01, 0x40,
