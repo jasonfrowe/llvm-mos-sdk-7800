@@ -254,6 +254,24 @@ void draw_sprite_fine(const atari7800_sprite_asset_t *asset, uint8_t x, uint8_t 
   note_status(atari7800_scene_draw_sprite(&scene, &shifted_asset, x, y));
 }
 
+/* MARIA Direct Mode has no per-pixel priority between objects: two objects
+ * that need pixel data on the same 8-line band (confirmed empirically --
+ * matches the ~8-line-per-object rendering unit noted throughout this
+ * file) AND overlap in X produce garbled or dropped pixels on real
+ * hardware, not a clean visual overlap. This is a hardware characteristic,
+ * not something the platform can fix underneath a caller -- draw order
+ * has to avoid the collision instead. `half_width` is a generous approximate
+ * on-screen half-width for obj_x, wide enough to be safe without needing
+ * exact MARIA width-field decoding. */
+static uint8_t bands_collide(uint8_t star_x, uint8_t star_y, uint8_t obj_x,
+    uint8_t obj_y, uint8_t half_width) {
+  uint8_t lo, hi;
+  if ((star_y >> 3) != (obj_y >> 3)) return 0;
+  lo = (obj_x > half_width) ? (uint8_t)(obj_x - half_width) : 0u;
+  hi = (uint8_t)(obj_x + half_width);
+  return (star_x >= lo && star_x <= hi);
+}
+
 int main(void) {
   uint8_t i;
 
@@ -326,11 +344,22 @@ int main(void) {
     atari7800_scene_begin_frame(&scene);
 
     /* Render stars, clipping to gameplay area Y >= 16 to keep the HUD
-     * zone clean. */
+     * zone clean. Skip a star that would land on the same 8-line band and
+     * overlap in X with the enemy or either ship half this frame -- see
+     * bands_collide() above for why (MARIA Direct Mode hardware behavior,
+     * confirmed empirically, not a software bug to "fix" underneath). */
     for (i = 0; i < 4; ++i) {
-      if (stars[i].y >= 16) {
-        /* Pick the reference matching which half of the 16-line zone this
-         * star falls in -- see star_sprite/star_sprite_upper above. */
+      if (stars[i].y < 16) {
+        continue;
+      }
+      if (bands_collide(stars[i].x, stars[i].y, enemy_x, enemy_y, 10u) ||
+          bands_collide(stars[i].x, stars[i].y, 72, 80, 10u) ||
+          bands_collide(stars[i].x, stars[i].y, 72, 88, 10u)) {
+        continue;
+      }
+      /* Pick the reference matching which half of the 16-line zone this
+       * star falls in -- see star_sprite/star_sprite_upper above. */
+      {
         const atari7800_sprite_asset_t *star_ref =
             ((stars[i].y & 15u) < 8u) ? &star_sprite : &star_sprite_upper;
         draw_sprite_fine(star_ref, stars[i].x, stars[i].y);
