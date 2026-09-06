@@ -1,3 +1,9 @@
+/* astrowing.bas (the reference 7800basic source being ported) uses
+ * "set zoneheight 16" -- 16-line zones halve the zone count (28->14),
+ * directly cutting the per-zone overhead the frame-budget investigation
+ * traced tonight's overrun to. Experimental: switching this demo over to
+ * measure the effect before deciding whether to adopt it more broadly. */
+#define ATARI7800_ZONE_HEIGHT 16
 #include <atari7800.h>
 
 /* Include packed spaceship frames */
@@ -77,8 +83,10 @@ static atari7800_scene_object_t star_objs[4] = {
   ATARI7800_SCENE_OBJECT_INIT, ATARI7800_SCENE_OBJECT_INIT,
   ATARI7800_SCENE_OBJECT_INIT, ATARI7800_SCENE_OBJECT_INIT
 };
-static atari7800_scene_object_t ship_top_obj = ATARI7800_SCENE_OBJECT_INIT;
-static atari7800_scene_object_t ship_bottom_obj = ATARI7800_SCENE_OBJECT_INIT;
+/* spaceship_frames[] is natively 16 lines tall (SPACESHIP_HEIGHT_LINES);
+ * under 16-line zones it fits in a single zone/object instead of the two
+ * 8-line halves 8-line zones required. */
+static atari7800_scene_object_t ship_obj = ATARI7800_SCENE_OBJECT_INIT;
 static atari7800_scene_object_t enemy_obj = ATARI7800_SCENE_OBJECT_INIT;
 
 /* HUD text is resolved into a glyph run once at startup instead of being
@@ -261,21 +269,22 @@ int main(void) {
   atari7800_scene_set_zone_static(&scene, 8, 1);
   atari7800_scene_end_frame(&scene);
 
+  /* NMI-driven sync (see atari7800.h): game logic below runs between
+   * wait_active_start() and wait_display_safe(), overlapping MARIA's
+   * active-display DMA time instead of being serialized before it the
+   * way a fully-polled atari7800_wait_vblank()-at-the-top loop forces.
+   * Only draw calls need to wait for the display to actually go quiet. */
+  atari7800_scene_enable_nmi_sync(&scene);
+
   for (;;) {
-    atari7800_wait_vblank();
+    atari7800_scene_wait_active_start();
     frame_count++;
 
-#ifdef ATARI7800_DEBUG_FRAME_BUDGET
-    /* Multi-stage frame-budget marker: each stage below sets a different
-     * hue right before it starts, so a single screenshot shows one colored
-     * band per stage instead of just an overrun/no-overrun bar. Whichever
-     * band is tallest is where the cycles are going. Luminance is kept
-     * high (0xF) on all of them so the bands are equally bright and only
-     * differ by hue; the final restore to ATARI7800_BG_DARKGRAY marks
-     * genuine leftover margin before the next vblank. */
-    ATARI7800_BACKGRND = 0x0fu; /* stage 1: game-logic functions below */
-#endif
-
+    /* No frame-budget marker here: writing ATARI7800_BACKGRND during
+     * this phase is, by design, sometimes during active display (that's
+     * the overlap this sync is for), and doing so repaints the live
+     * picture instead of measuring anything -- this phase's cost can't
+     * be visualized this way anymore. */
     update_player_input();
     apply_friction();
     update_scrolling();
@@ -283,8 +292,13 @@ int main(void) {
     cycle_stars();
     update_enemy();
 
+    atari7800_scene_wait_display_safe();
+
 #ifdef ATARI7800_DEBUG_FRAME_BUDGET
-    ATARI7800_BACKGRND = 0x8fu; /* stage 2: star + ship draw calls below */
+    /* Safe to mark from here on: atari7800_scene_wait_display_safe() just
+     * confirmed the display is quiet, so this and the restore below both
+     * land in the actual blanking window. */
+    ATARI7800_BACKGRND = 0x8fu; /* draw calls below */
 #endif
 
     /* Render stars as persistent objects (clipping to gameplay area Y >=
@@ -299,18 +313,14 @@ int main(void) {
       }
     }
 
-    /* Draw player spaceship (16 lines high, split into two 8-line zones) */
-    atari7800_sprite_asset_t top_half = spaceship_frames[angle];
-    top_half.height_lines = 8;
-    top_half.palette = 5; /* Use Palette 5 (Spaceship) */
-    top_half.data = (const uint8_t *)((uintptr_t)top_half.data + 8 * 256);
+    /* Draw player spaceship: natively 16 lines tall, fits one 16-line
+     * zone/object directly -- no more manual top/bottom split. Y=80 is
+     * 16-line-zone-aligned (80/16=5); the ship doesn't actually move
+     * (the world scrolls around it), so no fine-Y padding is needed. */
+    atari7800_sprite_asset_t ship_asset = spaceship_frames[angle];
+    ship_asset.palette = 5; /* Use Palette 5 (Spaceship) */
 
-    atari7800_sprite_asset_t bottom_half = spaceship_frames[angle];
-    bottom_half.height_lines = 8;
-    bottom_half.palette = 5; /* Use Palette 5 (Spaceship) */
-
-    draw_sprite_fine(&ship_top_obj, &top_half, 72, 88);
-    draw_sprite_fine(&ship_bottom_obj, &bottom_half, 72, 88 + 8);
+    draw_sprite_fine(&ship_obj, &ship_asset, 72, 80);
 
     /* Enemy: fighter_sprite has no fine-Y padding (unlike star_sprite_data
      * / spaceship_data), so it's drawn at a fixed, zone-aligned Y with
