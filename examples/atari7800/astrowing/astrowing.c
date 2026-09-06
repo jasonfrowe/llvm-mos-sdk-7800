@@ -54,6 +54,18 @@ static uint8_t rot_timer = 0;
 static int8_t scroll_x = 0;
 static int8_t scroll_y = 0;
 
+/* Enemy state (single enemy for now; the reference 7800basic source pools
+ * up to 4 with randomized spawns, deferred until this pass proves out).
+ * Reuses fighter_sprite (see fighter.sprite.h) exactly as the original
+ * game's regular enemies do: the player's own (non-rotating) ship shape,
+ * recolored via the "Enemy" palette (index 3, matching P3C1-3 in
+ * astrowing.bas) rather than needing new sprite art. Y is fixed:
+ * fighter_sprite_data has no fine-Y padding (unlike star_sprite_data), so
+ * only zone-aligned Y positions are safe without extending that asset. */
+static uint8_t enemy_x = 130;
+static const uint8_t enemy_y = 32;
+static int8_t enemy_dx = -1;
+
 /* Scene context global */
 static atari7800_scene_t scene;
 
@@ -67,6 +79,7 @@ static atari7800_scene_object_t star_objs[4] = {
 };
 static atari7800_scene_object_t ship_top_obj = ATARI7800_SCENE_OBJECT_INIT;
 static atari7800_scene_object_t ship_bottom_obj = ATARI7800_SCENE_OBJECT_INIT;
+static atari7800_scene_object_t enemy_obj = ATARI7800_SCENE_OBJECT_INIT;
 
 /* HUD text is resolved into a glyph run once at startup instead of being
  * re-parsed every frame; the hot loop just blits the pre-resolved glyphs. */
@@ -108,6 +121,18 @@ void cycle_stars(void) {
     atari7800_set_palette3(4, (atari7800_palette3_t){0x0c, 0x0f, 0x08});
   } else {
     atari7800_set_palette3(4, (atari7800_palette3_t){0x0f, 0x08, 0x0c});
+  }
+}
+
+/* Throttled drift, bouncing off the screen edges. Matches the frame-mask
+ * throttle technique astrowing.bas uses for enemy movement speed
+ * (`temp_v = frame & enemy_move_mask`), simplified to one enemy. */
+void update_enemy(void) {
+  if ((frame_count & 3u) != 0) return;
+
+  enemy_x = (uint8_t)(enemy_x + enemy_dx);
+  if (enemy_x <= 16u || enemy_x >= 144u) {
+    enemy_dx = (int8_t)-enemy_dx;
   }
 }
 
@@ -256,6 +281,7 @@ int main(void) {
     update_scrolling();
     shift_stars();
     cycle_stars();
+    update_enemy();
 
 #ifdef ATARI7800_DEBUG_FRAME_BUDGET
     ATARI7800_BACKGRND = 0x8fu; /* stage 2: star + ship draw calls below */
@@ -285,6 +311,13 @@ int main(void) {
 
     draw_sprite_fine(&ship_top_obj, &top_half, 72, 88);
     draw_sprite_fine(&ship_bottom_obj, &bottom_half, 72, 88 + 8);
+
+    /* Enemy: fighter_sprite has no fine-Y padding (unlike star_sprite_data
+     * / spaceship_data), so it's drawn at a fixed, zone-aligned Y with
+     * atari7800_scene_sprite directly rather than draw_sprite_fine's
+     * page-shift trick, which would read past the asset's declared size
+     * for a non-zone-aligned Y. */
+    note_status(atari7800_scene_sprite(&scene, &enemy_obj, &fighter_sprite, enemy_x, enemy_y));
 
     /* HUD text is pinned static residency (see setup above) -- nothing to
      * draw here every frame. Stars/ship are persistent objects (see
