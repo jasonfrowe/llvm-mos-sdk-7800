@@ -58,13 +58,17 @@ static uint8_t atari7800_scene_active_zones_prev[ATARI7800_SCENE_VISIBLE_ZONES];
 /* Tracker for active zones in the current frame. */
 static uint8_t atari7800_scene_active_zones_curr[ATARI7800_SCENE_VISIBLE_ZONES];
 
-/* Bitmask of zones pinned as "static residency" (see
- * atari7800_scene_set_zone_static): begin_frame/end_frame skip these
- * entirely instead of resetting/wiping them every frame, so content that
- * rarely changes (e.g. HUD labels) costs nothing once drawn. Packed as a
- * bitmask rather than one byte per zone since RAM is tight on this target. */
-#define ATARI7800_SCENE_STATIC_MASK_BYTES ((ATARI7800_SCENE_VISIBLE_ZONES + 7u) / 8u)
-static uint8_t atari7800_scene_zone_static[ATARI7800_SCENE_STATIC_MASK_BYTES];
+/* Per-zone "static residency" flag (see atari7800_scene_set_zone_static):
+ * begin_frame/end_frame skip these zones entirely instead of
+ * resetting/wiping them every frame, so content that rarely changes (e.g.
+ * HUD labels) costs nothing once drawn. One byte per zone rather than a
+ * packed bitmask: this is read in the per-frame begin_frame loop, and a
+ * runtime-variable bit shift (needed to test/set an arbitrary bit in a
+ * mask) has no single-instruction form on 6502, so it was actually costing
+ * far more in CPU cycles than the ~24 bytes of RAM it saved -- measured at
+ * ~3,955 cycles/frame in begin_frame alone via the frame-budget debug
+ * marker, more than the sprite draw calls it was gating. */
+static uint8_t atari7800_scene_zone_static[ATARI7800_SCENE_VISIBLE_ZONES];
 
 /**
  * Initializes the baseline hardware configuration of the Atari 7800.
@@ -234,10 +238,6 @@ void atari7800_scene_init_160a(atari7800_scene_t *scene, uint8_t bgcolor) {
   for (zone_index = 0; zone_index < ATARI7800_SCENE_VISIBLE_ZONES; ++zone_index) {
     atari7800_scene_active_zones_prev[zone_index] = 0u;
     atari7800_scene_active_zones_curr[zone_index] = 0u;
-  }
-
-  for (zone_index = 0; zone_index < ATARI7800_SCENE_STATIC_MASK_BYTES;
-       ++zone_index) {
     atari7800_scene_zone_static[zone_index] = 0u;
   }
 
@@ -272,8 +272,7 @@ void atari7800_scene_begin_frame(atari7800_scene_t *scene) {
   (void)scene;
 
   for (uint8_t z_idx = 0; z_idx < ATARI7800_SCENE_VISIBLE_ZONES; ++z_idx) {
-    if ((atari7800_scene_zone_static[z_idx >> 3] &
-         (uint8_t)(1u << (z_idx & 7u))) != 0u) {
+    if (atari7800_scene_zone_static[z_idx] != 0u) {
       continue;
     }
     atari7800_scene_active_zones_curr[z_idx] = 0u;
@@ -318,7 +317,6 @@ void atari7800_scene_end_frame(atari7800_scene_t *scene) {
 void atari7800_scene_set_zone_static(atari7800_scene_t *scene, uint8_t y_pos,
                                      uint8_t is_static) {
   uint8_t zone_index;
-  uint8_t mask;
   (void)scene;
 
   zone_index = (uint8_t)(y_pos >> ATARI7800_ZONE_SHIFT);
@@ -326,15 +324,11 @@ void atari7800_scene_set_zone_static(atari7800_scene_t *scene, uint8_t y_pos,
     zone_index = (uint8_t)(ATARI7800_SCENE_VISIBLE_ZONES - 1u);
   }
 
-  mask = (uint8_t)(1u << (zone_index & 7u));
+  atari7800_scene_zone_static[zone_index] = is_static;
 
   if (is_static != 0u) {
-    atari7800_scene_zone_static[zone_index >> 3] |= mask;
     atari7800_scene_active_zones_curr[zone_index] = 1u;
     atari7800_scene_active_zones_prev[zone_index] = 1u;
-  } else {
-    atari7800_scene_zone_static[zone_index >> 3] =
-        (uint8_t)(atari7800_scene_zone_static[zone_index >> 3] & ~mask);
   }
 }
 
