@@ -78,6 +78,13 @@ static uint8_t atari7800_scene_zone_static[ATARI7800_SCENE_VISIBLE_ZONES];
  * supported, since both would think they own the zone's byte offset 0. */
 static uint8_t atari7800_scene_zone_persist_count[ATARI7800_SCENE_VISIBLE_ZONES];
 
+/* Toggled by the NMI handler installed by atari7800_scene_enable_nmi_sync:
+ * nonzero while MARIA is scanning the visible display area, zero once it
+ * reaches the bottom blank entries. Only meaningful once that function
+ * has been called; otherwise NMI never fires (no DLL entry requests it)
+ * and this just stays zero forever. */
+static volatile uint8_t atari7800_scene_display_busy;
+
 /**
  * Initializes the baseline hardware configuration of the Atari 7800.
  * Locks the console in 7800 mode, turns off DMA during initial setup,
@@ -137,7 +144,8 @@ void atari7800_maria_build_blank_ntsc(
 
 #if ATARI7800_ZONE_HEIGHT == 16
   for (i = 0; i < 14; ++i) {
-    atari7800_maria_init_dll_entry(&display_list[1u + i], 0, zone_header, 0);
+    atari7800_maria_init_dll_entry(&display_list[1u + i], ATARI7800_ZONE_OFFSET,
+                                   zone_header, 0);
   }
   atari7800_maria_init_dll_entry(&display_list[15], 15, zone_header, 0);
   atari7800_maria_init_dll_entry(&display_list[16], 9, zone_header, 0);
@@ -145,7 +153,8 @@ void atari7800_maria_build_blank_ntsc(
   atari7800_maria_init_dll_entry(&display_list[18], 8, zone_header, 0);
 #else
   for (i = 0; i < 28; ++i) {
-    atari7800_maria_init_dll_entry(&display_list[1u + i], 7, zone_header, 0);
+    atari7800_maria_init_dll_entry(&display_list[1u + i], ATARI7800_ZONE_OFFSET,
+                                   zone_header, 0);
   }
   atari7800_maria_init_dll_entry(&display_list[29], 15, zone_header, 0);
   atari7800_maria_init_dll_entry(&display_list[30], 9, zone_header, 0);
@@ -260,6 +269,69 @@ void atari7800_scene_init_160a(atari7800_scene_t *scene, uint8_t bgcolor) {
   atari7800_scene_begin_frame(scene);
   scene->initialized = 1u;
   atari7800_init_160a(atari7800_ptr16(atari7800_scene_display_list), bgcolor);
+}
+
+/**
+ * NMI handler for atari7800_scene_enable_nmi_sync: fires once MARIA
+ * reaches the top blank template entry (start of visible area) and once
+ * more at the bottom blank template entry (end of visible area). Since
+ * the CPU can't tell which of the two fired, a plain toggle works because
+ * they're the only two NMI-flagged entries and always fire in that fixed
+ * order every frame. Kept to a single instruction's worth of real work so
+ * it costs as little as possible wherever it preempts.
+ */
+__attribute__((interrupt)) void nmi(void) {
+  atari7800_scene_display_busy ^= 1u;
+}
+
+/**
+ * Opt-in: see the declaration in atari7800.h for the full contract.
+ */
+void atari7800_scene_enable_nmi_sync(atari7800_scene_t *scene) {
+  (void)scene;
+
+  atari7800_scene_display_busy = 0u;
+
+  /* Re-flag the fixed top/bottom blank entries that
+   * atari7800_maria_build_blank_ntsc already set up (same line_offset
+   * values, same index formula, for both zone heights), adding
+   * ATARI7800_DLL_FLAG_NMI without disturbing their timing. */
+  atari7800_maria_init_dll_entry(&atari7800_scene_display_list[0], 8u,
+      &atari7800_scene_null_zone, ATARI7800_DLL_FLAG_NMI);
+  atari7800_maria_init_dll_entry(
+      &atari7800_scene_display_list[(uint8_t)(ATARI7800_SCENE_VISIBLE_ZONES + 1u)],
+      15u, &atari7800_scene_null_zone, ATARI7800_DLL_FLAG_NMI);
+
+  atari7800_wait_vblank();
+}
+
+/**
+ * See the declaration in atari7800.h for the full contract. Edge-triggered
+ * like atari7800_wait_vblank (waits for busy to clear if currently set,
+ * then waits for a *fresh* transition to busy) rather than "return if
+ * already busy": that guarantees whatever runs right after this call gets
+ * the (near-)full active-display window to overlap with, instead of only
+ * whatever happened to be left of a window that was already partway
+ * through.
+ */
+void atari7800_scene_wait_active_start(void) {
+  while (atari7800_scene_display_busy != 0u) {
+  }
+  while (atari7800_scene_display_busy == 0u) {
+  }
+}
+
+/**
+ * See the declaration in atari7800.h for the full contract. Level-
+ * triggered (just waits while busy) is correct here, unlike
+ * atari7800_scene_wait_active_start: this is meant to be called once per
+ * loop, always after that function (directly or via logic that ran in
+ * between), at which point busy is known to be currently set, so there's
+ * no risk of returning based on a stale already-safe window.
+ */
+void atari7800_scene_wait_display_safe(void) {
+  while (atari7800_scene_display_busy != 0u) {
+  }
 }
 
 /**

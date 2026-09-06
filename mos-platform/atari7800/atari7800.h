@@ -82,7 +82,7 @@
 
 #if ATARI7800_ZONE_HEIGHT == 16
 #define ATARI7800_ZONE_SHIFT 4
-#define ATARI7800_ZONE_OFFSET 0u
+#define ATARI7800_ZONE_OFFSET 15u
 #define ATARI7800_SCENE_VISIBLE_ZONES 14u
 #define ATARI7800_MARIA_NTSC_DLL_ENTRIES 19u
 #elif ATARI7800_ZONE_HEIGHT == 8
@@ -267,6 +267,36 @@ uint8_t atari7800_maria_plot_sprite_asset_zone5(uint8_t *zone,
 		uint16_t zone_size, uint8_t object_index,
 		const atari7800_sprite_asset_t *asset, uint8_t x_pos);
 void atari7800_scene_init_160a(atari7800_scene_t *scene, uint8_t bgcolor);
+/* Opt-in: flags the DLL's top and bottom blank template entries (never
+ * touched by per-frame zone activity, unlike the visible-zone entries)
+ * with ATARI7800_DLL_FLAG_NMI and installs an NMI handler that toggles a
+ * "display busy" flag on each one. This is what makes
+ * atari7800_scene_wait_active_start()/wait_display_safe() meaningful --
+ * without calling this first, the busy flag never changes and those two
+ * calls will hang forever. Call once after atari7800_scene_init_160a.
+ *
+ * Intended loop shape, so non-drawing logic overlaps active-display DMA
+ * time instead of being serialized before it the way a fully-polled loop
+ * (atari7800_wait_vblank() at the top, then everything) forces:
+ *
+ *   atari7800_scene_enable_nmi_sync(&scene);  // once
+ *   for (;;) {
+ *     atari7800_scene_wait_active_start();    // sync to a fresh frame
+ *     update_input(); update_physics(); ...   // overlaps active display
+ *     atari7800_scene_wait_display_safe();    // wait for it to finish
+ *     draw_sprite(...); ...                   // only now touch the DLL
+ *   }
+ */
+void atari7800_scene_enable_nmi_sync(atari7800_scene_t *scene);
+/* Blocks until MARIA has just started scanning the visible display area
+ * for a new frame (see atari7800_scene_enable_nmi_sync and the loop shape
+ * in its doc comment). Call this once per loop, before any non-drawing
+ * game logic. */
+void atari7800_scene_wait_active_start(void);
+/* Blocks until MARIA has finished scanning the current frame's visible
+ * area -- call this right before any draw calls that touch zone buffers
+ * or the DLL, after atari7800_scene_wait_active_start() and any logic. */
+void atari7800_scene_wait_display_safe(void);
 void atari7800_scene_set_palette(atari7800_scene_t *scene,
 		uint8_t palette_index, atari7800_palette3_t colors);
 void atari7800_scene_begin_frame(atari7800_scene_t *scene);
