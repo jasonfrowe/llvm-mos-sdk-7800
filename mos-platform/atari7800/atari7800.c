@@ -70,6 +70,14 @@ static uint8_t atari7800_scene_active_zones_curr[ATARI7800_SCENE_VISIBLE_ZONES];
  * marker, more than the sprite draw calls it was gating. */
 static uint8_t atari7800_scene_zone_static[ATARI7800_SCENE_VISIBLE_ZONES];
 
+/* Count of persistent objects (see atari7800_scene_object_t) currently
+ * packed, compactly from slot 0, in each zone's object list. Separate
+ * from atari7800_scene_zone_next_object, which is reset every frame by
+ * atari7800_scene_begin_frame for the older append-and-diff API -- mixing
+ * the two APIs for objects that could land in the same zone is not
+ * supported, since both would think they own the zone's byte offset 0. */
+static uint8_t atari7800_scene_zone_persist_count[ATARI7800_SCENE_VISIBLE_ZONES];
+
 /**
  * Initializes the baseline hardware configuration of the Atari 7800.
  * Locks the console in 7800 mode, turns off DMA during initial setup,
@@ -239,6 +247,7 @@ void atari7800_scene_init_160a(atari7800_scene_t *scene, uint8_t bgcolor) {
     atari7800_scene_active_zones_prev[zone_index] = 0u;
     atari7800_scene_active_zones_curr[zone_index] = 0u;
     atari7800_scene_zone_static[zone_index] = 0u;
+    atari7800_scene_zone_persist_count[zone_index] = 0u;
   }
 
   for (zone_index = 0; zone_index < ATARI7800_SCENE_VISIBLE_ZONES;
@@ -383,6 +392,83 @@ uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
   atari7800_scene_zone_next_object[zone_index] = (uint8_t)(object_index + 1u);
   atari7800_scene_active_zones_curr[zone_index] = 1u;
   return ATARI7800_OK;
+}
+
+/**
+ * Draws/updates a persistent sprite object (see atari7800_scene_object_t).
+ * The common case -- y_pos still maps to the object's current zone --
+ * just re-plots its existing header in place, touching no zone
+ * bookkeeping at all. Placing for the first time, or moving to a new
+ * zone, appends to that zone's persistent object list instead.
+ */
+uint8_t atari7800_scene_sprite(atari7800_scene_t *scene,
+                               atari7800_scene_object_t *object,
+                               const atari7800_sprite_asset_t *asset,
+                               uint8_t x_pos, uint8_t y_pos) {
+  uint8_t target_zone;
+  uint8_t slot;
+  uint8_t *zone;
+  uint8_t status;
+
+  if (scene == 0 || object == 0 || asset == 0 || scene->initialized == 0u) {
+    return ATARI7800_ERR_INVALID;
+  }
+
+  target_zone = (uint8_t)(y_pos >> ATARI7800_ZONE_SHIFT);
+  if (target_zone >= ATARI7800_SCENE_VISIBLE_ZONES) {
+    target_zone = (uint8_t)(ATARI7800_SCENE_VISIBLE_ZONES - 1u);
+  }
+
+  if (object->zone_index == target_zone) {
+    /* Common case: already placed here, just patch the header in place. */
+    zone = atari7800_scene_zones[target_zone];
+    return atari7800_maria_plot_sprite_asset_zone5(
+        zone, ATARI7800_SCENE_ZONE_BYTES, object->slot, asset, x_pos);
+  }
+
+  if (object->zone_index != ATARI7800_SCENE_OBJECT_UNPLACED) {
+    /* Crossed a zone boundary: park the old slot off-screen and leave it
+     * reserved there (see atari7800_scene_object_t for why it isn't
+     * reclaimed), then fall through to place fresh in the new zone. */
+    atari7800_scene_hide_sprite(object);
+  }
+
+  zone = atari7800_scene_zones[target_zone];
+  slot = atari7800_scene_zone_persist_count[target_zone];
+
+  status = atari7800_maria_plot_sprite_asset_zone5(
+      zone, ATARI7800_SCENE_ZONE_BYTES, slot, asset, x_pos);
+  if (status != ATARI7800_OK) {
+    return status;
+  }
+
+  if (slot == 0u) {
+    atari7800_maria_init_dll_entry(
+        &atari7800_scene_display_list[(uint8_t)(1u + target_zone)],
+        ATARI7800_ZONE_OFFSET, zone, 0u);
+  }
+
+  atari7800_scene_zone_persist_count[target_zone] = (uint8_t)(slot + 1u);
+  object->zone_index = target_zone;
+  object->slot = slot;
+  return ATARI7800_OK;
+}
+
+/**
+ * Hides a placed persistent object by parking it off-screen (x_pos beyond
+ * the visible 160px width), without releasing its slot. A no-op if the
+ * object was never placed.
+ */
+void atari7800_scene_hide_sprite(atari7800_scene_object_t *object) {
+  uint8_t *zone;
+
+  if (object == 0 || object->zone_index == ATARI7800_SCENE_OBJECT_UNPLACED) {
+    return;
+  }
+
+  zone = atari7800_scene_zones[object->zone_index];
+  zone[(uint16_t)object->slot * ATARI7800_MARIA_ZONE5_OBJECT_BYTES + 4u] =
+      200u;
 }
 
 /**

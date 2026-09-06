@@ -57,6 +57,17 @@ static int8_t scroll_y = 0;
 /* Scene context global */
 static atari7800_scene_t scene;
 
+/* Persistent sprite objects: each retains its assigned zone/slot across
+ * frames, so redrawing it every frame patches its existing header in
+ * place instead of re-deriving zone membership and appending a fresh one
+ * (see atari7800_scene_sprite in atari7800.h). */
+static atari7800_scene_object_t star_objs[4] = {
+  ATARI7800_SCENE_OBJECT_INIT, ATARI7800_SCENE_OBJECT_INIT,
+  ATARI7800_SCENE_OBJECT_INIT, ATARI7800_SCENE_OBJECT_INIT
+};
+static atari7800_scene_object_t ship_top_obj = ATARI7800_SCENE_OBJECT_INIT;
+static atari7800_scene_object_t ship_bottom_obj = ATARI7800_SCENE_OBJECT_INIT;
+
 /* HUD text is resolved into a glyph run once at startup instead of being
  * re-parsed every frame; the hot loop just blits the pre-resolved glyphs. */
 static atari7800_glyph_run_entry_t hud_glyph_entries[16];
@@ -183,13 +194,15 @@ void shift_stars(void) {
   }
 }
 
-/* Draws a sprite with pixel-fine vertical positioning inside the zone */
-void draw_sprite_fine(const atari7800_sprite_asset_t *asset, uint8_t x, uint8_t y) {
+/* Draws/updates a persistent sprite object with pixel-fine vertical
+ * positioning inside its zone. */
+void draw_sprite_fine(atari7800_scene_object_t *object,
+    const atari7800_sprite_asset_t *asset, uint8_t x, uint8_t y) {
   uint8_t y_offset = y & 7;
   atari7800_sprite_asset_t shifted_asset = *asset;
   shifted_asset.data = (const uint8_t *)((uintptr_t)shifted_asset.data + ((uint16_t)y_offset << 8));
 
-  note_status(atari7800_scene_draw_sprite(&scene, &shifted_asset, x, y));
+  note_status(atari7800_scene_sprite(&scene, object, &shifted_asset, x, y));
 }
 
 int main(void) {
@@ -245,19 +258,18 @@ int main(void) {
     cycle_stars();
 
 #ifdef ATARI7800_DEBUG_FRAME_BUDGET
-    ATARI7800_BACKGRND = 0x4fu; /* stage 2: atari7800_scene_begin_frame */
+    ATARI7800_BACKGRND = 0x8fu; /* stage 2: star + ship draw calls below */
 #endif
 
-    atari7800_scene_begin_frame(&scene);
-
-#ifdef ATARI7800_DEBUG_FRAME_BUDGET
-    ATARI7800_BACKGRND = 0x8fu; /* stage 3: star + ship draw calls below */
-#endif
-
-    /* Render stars (clipping to gameplay area Y >= 16 to keep HUD zone clean) */
+    /* Render stars as persistent objects (clipping to gameplay area Y >=
+     * 16 to keep the HUD zone clean); hide any star that scrolled into
+     * that band instead of just skipping its draw call, since a
+     * persistent object stays displayed until told otherwise. */
     for (i = 0; i < 4; ++i) {
       if (stars[i].y >= 16) {
-        draw_sprite_fine(&star_sprite, stars[i].x, stars[i].y);
+        draw_sprite_fine(&star_objs[i], &star_sprite, stars[i].x, stars[i].y);
+      } else {
+        atari7800_scene_hide_sprite(&star_objs[i]);
       }
     }
 
@@ -271,17 +283,14 @@ int main(void) {
     bottom_half.height_lines = 8;
     bottom_half.palette = 5; /* Use Palette 5 (Spaceship) */
 
-    draw_sprite_fine(&top_half, 72, 88);
-    draw_sprite_fine(&bottom_half, 72, 88 + 8);
+    draw_sprite_fine(&ship_top_obj, &top_half, 72, 88);
+    draw_sprite_fine(&ship_bottom_obj, &bottom_half, 72, 88 + 8);
 
     /* HUD text is pinned static residency (see setup above) -- nothing to
-     * draw here every frame. */
-
-#ifdef ATARI7800_DEBUG_FRAME_BUDGET
-    ATARI7800_BACKGRND = 0xcfu; /* stage 4: atari7800_scene_end_frame */
-#endif
-
-    atari7800_scene_end_frame(&scene);
+     * draw here every frame. Stars/ship are persistent objects (see
+     * setup above) -- no atari7800_scene_begin_frame/end_frame needed
+     * either, since nothing in this loop uses the older append-and-diff
+     * API any more. */
 
 #ifdef ATARI7800_DEBUG_FRAME_BUDGET
     /* Marks the end of this frame's CPU work: restore the real background

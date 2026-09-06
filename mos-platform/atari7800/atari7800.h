@@ -161,6 +161,34 @@ typedef struct atari7800_scene {
 	uint8_t initialized;
 } atari7800_scene_t;
 
+/* A persistent sprite object: retains its assigned zone and slot across
+ * frames so re-drawing it (typically every frame, at a new position)
+ * patches bytes in an existing header in place instead of re-deriving
+ * zone membership and appending a fresh one every time, the way
+ * atari7800_scene_draw_sprite does. Loosely adapted from 7800basic's
+ * object model (each sprite instance owns a fixed slot), but the slot
+ * number here is local to whichever zone the object currently occupies,
+ * not a single number reserved across every zone: our display lists are
+ * compact-plus-terminator rather than always-fully-populated, so a
+ * cross-zone "reserved everywhere" slot would leave stale bytes in the
+ * gap between non-adjacent occupied slots in a shared zone. Moving to a
+ * new zone parks the old slot off screen rather than reclaiming it (see
+ * atari7800_scene_sprite), so a zone's slot usage only ever grows, even
+ * if live occupancy shrinks -- fine for a modest, mostly-stable object
+ * count, worth knowing about for a scene with heavy zone-crossing churn.
+ *
+ * Declare one per logical sprite instance (a loop variable/array element
+ * is fine for interchangeable sprites, e.g. a star field), initialized
+ * with ATARI7800_SCENE_OBJECT_INIT, and pass it to
+ * atari7800_scene_sprite() every frame. */
+typedef struct atari7800_scene_object {
+	uint8_t zone_index;
+	uint8_t slot;
+} atari7800_scene_object_t;
+
+#define ATARI7800_SCENE_OBJECT_UNPLACED 0xffu
+#define ATARI7800_SCENE_OBJECT_INIT { ATARI7800_SCENE_OBJECT_UNPLACED, 0u }
+
 /* One pre-resolved glyph in a glyph run: which glyph to draw and its pen_x
  * offset from the run's draw-time x_pos. glyph_index of
  * ATARI7800_GLYPH_RUN_BLANK marks a skipped cell (originally whitespace),
@@ -256,6 +284,25 @@ void atari7800_scene_set_zone_static(atari7800_scene_t *scene, uint8_t y_pos,
 uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
 		const atari7800_sprite_asset_t *asset, uint8_t x_pos,
 		uint8_t y_pos);
+/* Draws/updates a persistent sprite object at (x, y). The first call for a
+ * given object appends it to the target zone's persistent object list and
+ * places it; later calls patch its existing header in place if y_pos
+ * still maps to the same zone (cheap -- no zone bookkeeping touched at
+ * all), or append it to a new zone's list if it crossed a zone boundary
+ * (see atari7800_scene_object_t for what happens to its old slot).
+ * Cheaper than atari7800_scene_draw_sprite for anything redrawn every
+ * frame, since it never needs atari7800_scene_begin_frame/end_frame.
+ * Returns ATARI7800_OK, ATARI7800_ERR_INVALID (null scene/object/asset),
+ * or ATARI7800_ERR_BUDGET_FULL if the target zone's object list is full. */
+uint8_t atari7800_scene_sprite(atari7800_scene_t *scene,
+		atari7800_scene_object_t *object,
+		const atari7800_sprite_asset_t *asset, uint8_t x_pos,
+		uint8_t y_pos);
+/* Hides a placed persistent object by parking it off-screen, without
+ * releasing its slot. Call atari7800_scene_sprite again later to show it
+ * at a new position -- if that lands back in the same zone it was hidden
+ * in, it's just another in-place patch. A no-op if never placed. */
+void atari7800_scene_hide_sprite(atari7800_scene_object_t *object);
 /* Returns ATARI7800_OK, ATARI7800_ERR_INVALID (bad args/empty font), or
  * ATARI7800_ERR_BUDGET_FULL if a zone ran out of room mid-string (any
  * glyphs already written before that point remain drawn). */
