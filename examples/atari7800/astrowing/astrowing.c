@@ -228,12 +228,14 @@ int main(void) {
     frame_count++;
 
 #ifdef ATARI7800_DEBUG_FRAME_BUDGET
-    /* Marks the start of this frame's CPU work with a bright background
-     * flash. If per-frame work overruns the vblank window, this color
-     * bleeds into the top of the visible screen as a bar instead of
-     * staying hidden -- each visible scanline of bleed is roughly one
-     * NTSC scanline's worth of cycles (~113 cycles) over budget. */
-    ATARI7800_BACKGRND = 0x0fu;
+    /* Multi-stage frame-budget marker: each stage below sets a different
+     * hue right before it starts, so a single screenshot shows one colored
+     * band per stage instead of just an overrun/no-overrun bar. Whichever
+     * band is tallest is where the cycles are going. Luminance is kept
+     * high (0xF) on all of them so the bands are equally bright and only
+     * differ by hue; the final restore to ATARI7800_BG_DARKGRAY marks
+     * genuine leftover margin before the next vblank. */
+    ATARI7800_BACKGRND = 0x0fu; /* stage 1: game-logic functions below */
 #endif
 
     update_player_input();
@@ -242,7 +244,15 @@ int main(void) {
     shift_stars();
     cycle_stars();
 
+#ifdef ATARI7800_DEBUG_FRAME_BUDGET
+    ATARI7800_BACKGRND = 0x4fu; /* stage 2: atari7800_scene_begin_frame */
+#endif
+
     atari7800_scene_begin_frame(&scene);
+
+#ifdef ATARI7800_DEBUG_FRAME_BUDGET
+    ATARI7800_BACKGRND = 0x8fu; /* stage 3: star + ship draw calls below */
+#endif
 
     /* Render stars (clipping to gameplay area Y >= 16 to keep HUD zone clean) */
     for (i = 0; i < 4; ++i) {
@@ -266,6 +276,10 @@ int main(void) {
 
     /* HUD text is pinned static residency (see setup above) -- nothing to
      * draw here every frame. */
+
+#ifdef ATARI7800_DEBUG_FRAME_BUDGET
+    ATARI7800_BACKGRND = 0xcfu; /* stage 4: atari7800_scene_end_frame */
+#endif
 
     atari7800_scene_end_frame(&scene);
 
