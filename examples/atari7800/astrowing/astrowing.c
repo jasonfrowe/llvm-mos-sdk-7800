@@ -1,8 +1,7 @@
 /* astrowing.bas (the reference 7800basic source being ported) uses
  * "set zoneheight 16" -- 16-line zones halve the zone count (28->14),
- * directly cutting the per-zone overhead the frame-budget investigation
- * traced tonight's overrun to. Experimental: switching this demo over to
- * measure the effect before deciding whether to adopt it more broadly. */
+ * cutting per-zone overhead, and let a full 16-line-tall sprite (the
+ * player ship) live in a single zone as one real object. */
 #define ATARI7800_ZONE_HEIGHT 16
 #include <atari7800.h>
 
@@ -21,12 +20,13 @@ static const int16_t cos_table[16] = {
   24, 24, 16, 8, 0, -8, -16, -24, -24, -24, -16, -8, 0, 8, 16, 24
 };
 
-/* Page-aligned 1-pixel star sprite. A single Direct Mode object only
- * renders ~8 scanlines regardless of the containing zone's declared
- * height (confirmed empirically -- see the ship sprite below and
- * 7800port.md), so positioning a star anywhere within a 16-line zone
- * needs TWO reference points, one per 8-line half, each supporting the
- * same 0-7 fine-shift trick draw_sprite_fine already does via y&7:
+/* Page-aligned 1-pixel star sprite, with two reference points (one per
+ * 8-line half of the 16-line zone) so draw_sprite_fine's y&7 shift trick
+ * can position it anywhere. This predates a since-fixed platform bug
+ * (see 7800port.md, "Fix ATARI7800_ZONE_HEIGHT actually taking effect") --
+ * a single reference with a y&15 shift would likely work fine now that
+ * zones are genuinely 16 lines tall, but this two-reference form is
+ * proven correct and hasn't been revisited yet:
  *   - pages 0-6: leading padding, page 7: pixel (bottom-half reference)
  *   - pages 8-14: padding (doubles as the top half's leading padding),
  *     page 15: pixel (top-half reference), pages 16-22: trailing padding
@@ -254,24 +254,6 @@ void draw_sprite_fine(const atari7800_sprite_asset_t *asset, uint8_t x, uint8_t 
   note_status(atari7800_scene_draw_sprite(&scene, &shifted_asset, x, y));
 }
 
-/* MARIA Direct Mode has no per-pixel priority between objects: two objects
- * that need pixel data on the same 8-line band (confirmed empirically --
- * matches the ~8-line-per-object rendering unit noted throughout this
- * file) AND overlap in X produce garbled or dropped pixels on real
- * hardware, not a clean visual overlap. This is a hardware characteristic,
- * not something the platform can fix underneath a caller -- draw order
- * has to avoid the collision instead. `half_width` is a generous approximate
- * on-screen half-width for obj_x, wide enough to be safe without needing
- * exact MARIA width-field decoding. */
-static uint8_t bands_collide(uint8_t star_x, uint8_t star_y, uint8_t obj_x,
-    uint8_t obj_y, uint8_t half_width) {
-  uint8_t lo, hi;
-  if ((star_y >> 3) != (obj_y >> 3)) return 0;
-  lo = (obj_x > half_width) ? (uint8_t)(obj_x - half_width) : 0u;
-  hi = (uint8_t)(obj_x + half_width);
-  return (star_x >= lo && star_x <= hi);
-}
-
 int main(void) {
   uint8_t i;
 
@@ -344,45 +326,26 @@ int main(void) {
     atari7800_scene_begin_frame(&scene);
 
     /* Render stars, clipping to gameplay area Y >= 16 to keep the HUD
-     * zone clean. Skip a star that would land on the same 8-line band and
-     * overlap in X with the enemy or either ship half this frame -- see
-     * bands_collide() above for why (MARIA Direct Mode hardware behavior,
-     * confirmed empirically, not a software bug to "fix" underneath). */
+     * zone clean. */
     for (i = 0; i < 4; ++i) {
-      if (stars[i].y < 16) {
-        continue;
-      }
-      if (bands_collide(stars[i].x, stars[i].y, enemy_x, enemy_y, 10u) ||
-          bands_collide(stars[i].x, stars[i].y, 72, 80, 10u) ||
-          bands_collide(stars[i].x, stars[i].y, 72, 88, 10u)) {
-        continue;
-      }
-      /* Pick the reference matching which half of the 16-line zone this
-       * star falls in -- see star_sprite/star_sprite_upper above. */
-      {
+      if (stars[i].y >= 16) {
+        /* Pick the reference matching which half of the 16-line zone this
+         * star falls in -- see star_sprite/star_sprite_upper above. */
         const atari7800_sprite_asset_t *star_ref =
             ((stars[i].y & 15u) < 8u) ? &star_sprite : &star_sprite_upper;
         draw_sprite_fine(star_ref, stars[i].x, stars[i].y);
       }
     }
 
-    /* Draw player spaceship (16 lines high). A single Direct Mode object
-     * empirically only renders ~8 scanlines regardless of the containing
-     * zone's declared height (confirmed by A/B testing against 7800basic's
-     * own object model), so this still needs two stacked 8-line objects --
-     * 16-line zones just mean both can now live in the *same* zone instead
-     * of needing two separate zones like they did under 8-line zones. */
-    atari7800_sprite_asset_t top_half = spaceship_frames[angle];
-    top_half.height_lines = 8;
-    top_half.palette = 5; /* Use Palette 5 (Spaceship) */
-    top_half.data = (const uint8_t *)((uintptr_t)top_half.data + 8 * 256);
-
-    atari7800_sprite_asset_t bottom_half = spaceship_frames[angle];
-    bottom_half.height_lines = 8;
-    bottom_half.palette = 5; /* Use Palette 5 (Spaceship) */
-
-    draw_sprite_fine(&top_half, 72, 80);
-    draw_sprite_fine(&bottom_half, 72, 88);
+    /* Draw player spaceship as a single real 16-line-tall object.
+     * spaceship_frames[] is genuinely 16 lines of pixel data
+     * (SPACESHIP_HEIGHT_LINES) -- the earlier two-stacked-8-line-object
+     * workaround here was compensating for a since-fixed platform bug
+     * (ATARI7800_ZONE_HEIGHT wasn't actually reaching the compiled scene
+     * code -- see 7800port.md), not a real MARIA per-object height cap. */
+    atari7800_sprite_asset_t ship = spaceship_frames[angle];
+    ship.palette = 5; /* Use Palette 5 (Spaceship) */
+    draw_sprite_fine(&ship, 72, 80);
 
     /* Enemy: fighter_sprite has no fine-Y padding (unlike star_sprite_data
      * / spaceship_data), so it's drawn at a fixed, zone-aligned Y directly
