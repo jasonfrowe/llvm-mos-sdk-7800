@@ -243,6 +243,60 @@ uint8_t atari7800_maria_plot_sprite_asset_zone5(
 }
 
 /**
+ * Rewrites an already-placed 5-byte Direct Mode object header in place,
+ * touching only its own 5 bytes -- unlike atari7800_maria_plot_sprite_zone5,
+ * it does NOT zero the 2 bytes after it. Those bytes either belong to the
+ * next occupied slot's header (zeroing them would corrupt that object) or
+ * are that slot's already-correct list terminator (nothing to fix). Use
+ * this to update a slot that was already terminated correctly when it was
+ * first placed; use atari7800_maria_plot_sprite_zone5 only for placing into
+ * a slot for the first time, so its terminator gets written once.
+ */
+uint8_t atari7800_maria_patch_sprite_zone5(uint8_t *zone, uint16_t zone_size,
+                                           uint8_t object_index,
+                                           uint16_t sprite_addr, uint8_t mode,
+                                           uint8_t palette,
+                                           uint8_t width_twos_comp,
+                                           uint8_t x_pos) {
+  const uint16_t start =
+      (uint16_t)object_index * ATARI7800_MARIA_ZONE5_OBJECT_BYTES;
+  const uint16_t end = start + ATARI7800_MARIA_ZONE5_OBJECT_BYTES;
+
+  if (end > zone_size) {
+    return ATARI7800_ERR_BUDGET_FULL;
+  }
+
+  zone[start] = (uint8_t)(sprite_addr & 0xffu);
+  zone[(uint16_t)(start + 1u)] = mode;
+  zone[(uint16_t)(start + 2u)] = (uint8_t)(sprite_addr >> 8);
+  zone[(uint16_t)(start + 3u)] =
+      atari7800_maria_pal_width(palette, width_twos_comp);
+  zone[(uint16_t)(start + 4u)] = x_pos;
+  return ATARI7800_OK;
+}
+
+/**
+ * Resolves a sprite asset descriptor's data pointer and invokes
+ * atari7800_maria_patch_sprite_zone5.
+ */
+uint8_t atari7800_maria_patch_sprite_asset_zone5(
+    uint8_t *zone, uint16_t zone_size, uint8_t object_index,
+    const atari7800_sprite_asset_t *asset, uint8_t x_pos) {
+  uint16_t sprite_addr;
+
+  if (asset == 0 || asset->data == 0) {
+    return ATARI7800_ERR_INVALID;
+  }
+
+  sprite_addr = atari7800_ptr16(asset->data);
+
+  return atari7800_maria_patch_sprite_zone5(zone, zone_size, object_index,
+                                            sprite_addr, asset->mode,
+                                            asset->palette,
+                                            asset->width_twos_comp, x_pos);
+}
+
+/**
  * Initializes the stateful scene manager, building the DLL structure
  * and clearing the low/high zone buffers.
  */
@@ -492,9 +546,12 @@ uint8_t atari7800_scene_sprite(atari7800_scene_t *scene,
   }
 
   if (object->zone_index == target_zone) {
-    /* Common case: already placed here, just patch the header in place. */
+    /* Common case: already placed here, just patch the header in place.
+     * Must not touch the 2 bytes after it (see
+     * atari7800_maria_patch_sprite_zone5) -- they belong to whatever
+     * object occupies the next slot in this zone, if any. */
     zone = atari7800_scene_zones[target_zone];
-    return atari7800_maria_plot_sprite_asset_zone5(
+    return atari7800_maria_patch_sprite_asset_zone5(
         zone, ATARI7800_SCENE_ZONE_BYTES, object->slot, asset, x_pos);
   }
 

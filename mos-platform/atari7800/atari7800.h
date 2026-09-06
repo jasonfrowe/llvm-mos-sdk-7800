@@ -266,6 +266,21 @@ uint8_t atari7800_maria_plot_sprite_zone5(uint8_t *zone, uint16_t zone_size,
 uint8_t atari7800_maria_plot_sprite_asset_zone5(uint8_t *zone,
 		uint16_t zone_size, uint8_t object_index,
 		const atari7800_sprite_asset_t *asset, uint8_t x_pos);
+/* Rewrites an already-placed object header in place (5 bytes only -- does
+ * NOT zero the 2 bytes after it, unlike atari7800_maria_plot_sprite_zone5).
+ * Use only for a slot that was already placed with the plot function above
+ * (so its terminator/next-slot bytes are already correct); using this for
+ * a slot's first placement would leave the list unterminated. Returns
+ * ATARI7800_OK or ATARI7800_ERR_BUDGET_FULL. */
+uint8_t atari7800_maria_patch_sprite_zone5(uint8_t *zone, uint16_t zone_size,
+		uint8_t object_index, uint16_t sprite_addr, uint8_t mode,
+		uint8_t palette, uint8_t width_twos_comp, uint8_t x_pos);
+/* Resolves a sprite asset descriptor and invokes
+ * atari7800_maria_patch_sprite_zone5. Returns ATARI7800_OK,
+ * ATARI7800_ERR_INVALID (null/empty asset), or ATARI7800_ERR_BUDGET_FULL. */
+uint8_t atari7800_maria_patch_sprite_asset_zone5(uint8_t *zone,
+		uint16_t zone_size, uint8_t object_index,
+		const atari7800_sprite_asset_t *asset, uint8_t x_pos);
 void atari7800_scene_init_160a(atari7800_scene_t *scene, uint8_t bgcolor);
 /* Opt-in: flags the DLL's top and bottom blank template entries (never
  * touched by per-frame zone activity, unlike the visible-zone entries)
@@ -323,7 +338,18 @@ uint8_t atari7800_scene_draw_sprite(atari7800_scene_t *scene,
  * Cheaper than atari7800_scene_draw_sprite for anything redrawn every
  * frame, since it never needs atari7800_scene_begin_frame/end_frame.
  * Returns ATARI7800_OK, ATARI7800_ERR_INVALID (null scene/object/asset),
- * or ATARI7800_ERR_BUDGET_FULL if the target zone's object list is full. */
+ * or ATARI7800_ERR_BUDGET_FULL if the target zone's object list is full.
+ *
+ * CAVEAT: a zone's slot usage only grows (see atari7800_scene_object_t) --
+ * an object that repeatedly crosses in and out of the same zone (e.g. one
+ * that oscillates across a zone boundary every frame) burns a fresh slot
+ * every time it re-enters, and will eventually exhaust that zone's ~12-slot
+ * budget even though its live occupancy never grows. Safe for objects with
+ * a fixed or rarely-changing zone (HUD elements, an enemy at a fixed Y);
+ * avoid for objects that cross zone boundaries often (e.g. a scrolling
+ * starfield) -- use atari7800_scene_draw_sprite with
+ * atari7800_scene_begin_frame/end_frame instead, which re-derives each
+ * zone's object list from scratch every frame and has no such growth. */
 uint8_t atari7800_scene_sprite(atari7800_scene_t *scene,
 		atari7800_scene_object_t *object,
 		const atari7800_sprite_asset_t *asset, uint8_t x_pos,
