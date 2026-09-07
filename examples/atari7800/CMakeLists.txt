@@ -26,14 +26,16 @@ install_example(pokey-min.a78)
 
 add_executable(title-demo.a78 title-demo/title-demo.c)
 target_compile_options(title-demo.a78 PRIVATE "-Os")
-# 48K + POKEY@450 NOT enabled here: re-investigated this session (7800port.md
-# #16) with a header now confirmed byte-for-byte identical to the reference
-# astrowing.bas build (a real v4 audio-field byte-order bug was found and
-# fixed along the way) -- the crash persists regardless, including in a
-# minimal 3-line test program (pokey-min.a78, above) with no scene code at
-# all. This rules out both ROM size and the header as the cause. Left
-# disabled pending either real-hardware testing or deeper study of this
-# MAME fork's a78_p450_t0 cart-slot memory-map implementation.
+# 48K + POKEY@450: re-enabled (7800port.md #19) after finding and fixing the
+# actual root cause in the test emulator itself (third_party/a7800, a fork
+# of 7800-devtools/a7800 this SDK now owns and builds from source) -- its
+# a78_p450_t0 cart-slot device was claiming the full 0x0400-0x04FF for
+# POKEY, when only 0x0400-0x047F should be (0x0480-0x04FF is real 6532 RIOT
+# RAM per the 7800 Software Guide's memory map); the real BIOS's own boot
+# sequence walks its PC through that range and crashes on the resulting
+# constant 0xFF stub. Confirmed fixed against pokey-min.a78 and this target
+# alike.
+target_link_options(title-demo.a78 PRIVATE "-Wl,--defsym=__cart_pokey_flags=2" "-Wl,--defsym=__cart_rom_size=48")
 install_example(title-demo.a78)
 
 option(ATARI7800_ASTROWING_DEBUG_FRAME_BUDGET
