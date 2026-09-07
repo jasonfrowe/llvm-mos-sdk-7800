@@ -12,7 +12,6 @@
 
 /* Include packed spaceship frames */
 #include "assets/spaceship.h"
-#include "assets/bullet.h"
 
 /* Include HUD font */
 #include "../assets/fighter.sprite.h"
@@ -22,6 +21,7 @@
  * #13-#19 for how these were derived/verified) rather than duplicated. */
 #include "../title-demo/assets/song_title.h"
 #include "../title-demo/assets/title_screen.h"
+#include "assets/song_level1.h"
 
 /* Aligned 16-bit sine/cosine tables for ship physics */
 static const int16_t sin_table[16] = {
@@ -47,17 +47,45 @@ static const int16_t cos_table[16] = {
  * both pixels at once, doubling every star. Needs pages 0-30 (shift ranges
  * 0-15, window is [shift, shift+15], so the pixel at page 15 must stay
  * reachable up to shift=15 i.e. window [15,30]) -- pages 16-30 are explicit
- * trailing padding, not reachable ROM garbage. */
-static const uint8_t star_sprite_data[31 * 256] __attribute__((aligned(256))) = {
-  [15 * 256] = 0x40, /* Page 15: pixel */
+ * trailing padding, not reachable ROM garbage.
+ *
+ * Shares its 31-page block with bullet_sprite (below) rather than each
+ * getting an independent 7936-byte array: both are single-byte-wide
+ * (4px) MARIA_STRIDED assets needing the same 31-page fine-Y envelope,
+ * so a second, byte-1 "column" in the same pages costs nothing extra --
+ * same technique as spaceship_data's 16 frames or title_screen_data's
+ * chunks sharing one block, just with 2 tiny sprites instead of many
+ * animation frames. This one change was needed to fit the level-1 music
+ * (song_level1) within 48K's actual usable ROM budget -- see
+ * 7800port.md #22. */
+static const uint8_t misc_sprite_data[31 * 256] __attribute__((aligned(256))) = {
+  [15 * 256 + 0] = 0x40, /* star, page 15: pixel */
+  [12 * 256 + 1] = 0x14, /* bullet, page 12: row 3 */
+  [13 * 256 + 1] = 0x14, /* bullet, page 13: row 2 */
+  [14 * 256 + 1] = 0x14, /* bullet, page 14: row 1 */
+  [15 * 256 + 1] = 0x14, /* bullet, page 15: row 0 (top) */
 };
 
 static const atari7800_sprite_asset_t star_sprite = {
-  .data = star_sprite_data,
+  .data = &misc_sprite_data[0],
   .width_bytes = 1u,
   .height_lines = 8u,
   .mode = 0x40u,
   .palette = 4u,
+  .width_twos_comp = 0x1fu,
+  .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED
+};
+
+/* astrowing.bas's bullet_conv.png (4x16, indexed): real ink is only a
+ * 2px-wide, 4-row mark at the top (rows 0-3, packed byte 0x14 --
+ * pack_160a([0,1,1,0])), the rest of the 16-line canvas is blank.
+ * Palette 1 ("Player Bullets"), matching `plotsprite bullet_conv 1 ...`. */
+static const atari7800_sprite_asset_t bullet_sprite = {
+  .data = &misc_sprite_data[1],
+  .width_bytes = 1u,
+  .height_lines = 8u,
+  .mode = 0x40u,
+  .palette = 1u,
   .width_twos_comp = 0x1fu,
   .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED
 };
@@ -460,8 +488,23 @@ static void title_screen_loop(void) {
 
 int main(void) {
   uint8_t i;
+  const uint8_t *music_cursor = song_level1;
 
   title_screen_loop();
+
+  /* atari7800_pokey_init() re-clears every POKEY register (AUDC1-4
+   * included), silencing whatever note the title music was on when the
+   * player pressed fire -- title_screen_loop's own atari7800_pokey_step
+   * calls stop the instant its loop exits, but POKEY itself keeps
+   * generating whatever tone AUDF/AUDC were last set to until something
+   * tells it otherwise (confirmed hands-on: without this, gameplay starts
+   * with the title screen's last note still ringing). astrowing.bas
+   * doesn't hit this itself since 7800basic's PlayMusic is switching which
+   * song feeds the interpreter, never fully stopping and restarting
+   * POKEY -- this port's title screen and gameplay are more separated
+   * (different loops, different sync strategy) so the silence has to be
+   * explicit here instead. */
+  atari7800_pokey_init();
 
   /* Initialize system with background color */
   atari7800_scene_init_160a(&scene, ATARI7800_BG_DARKGRAY);
@@ -519,6 +562,15 @@ int main(void) {
     if (bcooldown > 0) --bcooldown;
     if (ATARI7800_JOY0FIRE1() && bcooldown == 0) fire_bullet();
     update_bullets();
+
+    /* Level 1 music (astrowing.bas:3508-3510/3576-3578's PlayMusic branch
+     * for current_level=1 -- Song_02_Data/Song_02_30hz.bin; this port has
+     * no level progression yet, so it's the only gameplay track for now).
+     * Same 30Hz-authored, every-other-frame cadence as the title screen's
+     * own atari7800_pokey_step call. */
+    if ((frame_count & 1u) == 0u) {
+      atari7800_pokey_step(&music_cursor, song_level1);
+    }
 
     atari7800_scene_wait_display_safe();
 
