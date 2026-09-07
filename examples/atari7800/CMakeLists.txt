@@ -16,11 +16,18 @@ install_example(astrowing.a78)
 
 add_executable(title-demo.a78 title-demo/title-demo.c)
 target_compile_options(title-demo.a78 PRIVATE "-Os")
-# Declares POKEY @ $450 in the .a78 header's v4 audio field (see
-# __cart_pokey_flags in mos-platform/atari7800/link.ld) -- only this
-# program's header carries it; every other example's default (0) is
-# unaffected.
-target_link_options(title-demo.a78 PRIVATE "-Wl,--defsym=__cart_pokey_flags=2")
+# 48 KiB, non-bankswitched (just 16KiB more flat ROM than the 32K default,
+# mapped at 0x4000-0x7FFF -- see mos-platform/atari7800/link.ld) + POKEY @
+# $450 are NOT enabled here: confirmed both are required together to match
+# every real POKEY-equipped astrowing.bas build, but the combination
+# crashes outright in this SDK's test emulator (a full black screen, CPU
+# executing garbage) even at 48K -- ruling out ROM size as the actual
+# blocker, and a follow-up IRQ-masking fix (atari7800_pokey_init) didn't
+# resolve it either (confirmed via direct flag inspection that the crash
+# isn't even a maskable-IRQ storm). 48K alone (no POKEY) was confirmed
+# to work correctly. See 7800port.md for the full investigation; this
+# needs more study of the emulator's cart-slot implementation, or real
+# hardware, before enabling POKEY here again.
 install_example(title-demo.a78)
 
 option(ATARI7800_ASTROWING_DEBUG_FRAME_BUDGET

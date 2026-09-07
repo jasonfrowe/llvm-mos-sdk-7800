@@ -1,14 +1,28 @@
 /* Atari 7800 linker script (initial baseline).
  *
- * This first implementation targets a flat 32 KiB ROM image mapped at
- * 0x8000-0xFFFF with a 4 KiB RAM window at 0x1800-0x27FF.
+ * This first implementation targets a flat ROM image (32 or 48 KiB, see
+ * __cart_rom_size below) ending at 0xFFFF, with a 4 KiB RAM window at
+ * 0x1800-0x27FF.
  *
  * Output is emitted as an A78 file: 128-byte header + ROM payload.
  */
 
+/* 32 (default) or 48 KiB. A 48K cart is *not* bankswitched -- per
+ * https://7800.8bitdev.org/index.php/Bankset_Bankswitching, it's just 16KiB
+ * of extra flat ROM, mapped at 0x4000-0x7FFF below the standard
+ * 0x8000-0xFFFF window (cart_rom's ORIGIN below grows downward from 0xFFFF
+ * as size increases, so 32K starts at 0x8000 and 48K starts at 0x4000 --
+ * same formula, no separate case needed). Override per-program with
+ * `-Wl,--defsym=__cart_rom_size=48` -- see the ATARI7800_ZONE_HEIGHT
+ * lesson in 7800port.md for why this isn't just changed here for every
+ * program. astrowing/title-demo need 48K: this SDK's test emulator's
+ * POKEY-@-$450 cart-slot class (a78_p450_t0) broke rendering outright at
+ * 32K (7800port.md) -- 48K, matching every real POKEY-equipped
+ * astrowing.bas build, is untested at time of writing but is the
+ * user-directed fix, not a guess. */
 PROVIDE(__cart_rom_size = 32);
-ASSERT(__cart_rom_size == 32,
-       "ATARI 7800: Initial target currently supports only 32 KiB ROM");
+ASSERT(__cart_rom_size == 32 || __cart_rom_size == 48,
+       "ATARI 7800: only 32 KiB or 48 KiB (non-bankswitched) ROM is supported");
 
 /* POKEY declaration for the .a78 header's v4 "audio" field (low byte,
  * bits 0-2): 0 = none (default, every program that doesn't override this),
@@ -28,7 +42,7 @@ MEMORY {
   zp : ORIGIN = __rc31 + 1, LENGTH = 0x100 - (__rc31 + 1)
 
   header   (r) : ORIGIN = 0x0000, LENGTH = 128
-  cart_rom (rx) : ORIGIN = 0x8000, LENGTH = __cart_rom_size * 1024
+  cart_rom (rx) : ORIGIN = 0x10000 - __cart_rom_size * 1024, LENGTH = __cart_rom_size * 1024
   ram_low (w)   : ORIGIN = 0x1800, LENGTH = 0x0840
   ram (w)       : ORIGIN = 0x2200, LENGTH = 0x0600
 }
@@ -81,20 +95,15 @@ SECTIONS {
      * $0450" flag, and it's the ONE this SDK's actual test emulator (a7800,
      * a 7800-devtools/a7800 fork) reads for cart-type detection -- it does
      * NOT look at the v4 "audio" field below at all, despite this header
-     * declaring version 4. Deliberately left at 0 (not derived from
-     * __cart_pokey_flags) anyway: setting that bit switches this
-     * emulator's cart-slot device to its "a78_p450_t0" class
-     * (a78_slot.cpp), which broke this platform's basic ROM/RAM layout
-     * outright (confirmed hands-on: title-demo rendered a fully black
-     * screen with the bit set, and rendered correctly again the instant it
-     * was cleared, v4 field unchanged) -- not investigated further since
-     * correct rendering matters more than an audible POKEY in this one
-     * emulator fork. The v4 field below is still set correctly per spec,
-     * for real hardware or any v4-aware tool; POKEY code written against
-     * it (atari7800_pokey.h) is untested for actual sound in this
-     * environment as a result -- see 7800port.md. */
+     * declaring version 4. Setting it at 32 KiB broke rendering outright
+     * (confirmed hands-on: full black screen, cleared instantly by
+     * clearing this bit) -- every real POKEY-equipped astrowing.bas build
+     * is 48 KiB, so __cart_rom_size=48 is required alongside this bit;
+     * re-enabled here on that basis, not yet re-confirmed working at 48K
+     * (see 7800port.md). Same `(flags << 5) & 0x40` mapping as the v4
+     * field: flags=2 (POKEY @ $450) sets bit 6, flags=0 clears it. */
     BYTE(0)
-    BYTE(0)
+    BYTE((__cart_pokey_flags << 5) & 0x40)
 
     /* Controllers 1 and 2: standard 7800 joypad. */
     BYTE(1)

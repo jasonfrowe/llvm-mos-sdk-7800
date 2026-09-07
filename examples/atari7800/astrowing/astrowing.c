@@ -10,6 +10,7 @@
 
 /* Include HUD font */
 #include "../assets/fighter.sprite.h"
+#include "../assets/hud_font.h"
 
 /* Aligned 16-bit sine/cosine tables for ship physics */
 static const int16_t sin_table[16] = {

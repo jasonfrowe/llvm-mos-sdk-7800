@@ -172,44 +172,73 @@ def main():
     parser.add_argument("--symbol", required=True)
     parser.add_argument("--zone-height", type=int, default=16)
     parser.add_argument("--palette", type=int, default=0)
+    parser.add_argument(
+        "--y-offset",
+        type=int,
+        default=0,
+        help=(
+            "Screen Y (pixel) the banner's top row is drawn at. Need not be "
+            "zone-aligned: each touched zone is still drawn zone-aligned "
+            "(shift=0) via a per-zone row remap -- for zone z, local row r "
+            "maps to image row z*zone_height + r - y_offset, with rows "
+            "outside the image's own height rendered blank. This is how "
+            "astrowing.bas's plotbanner y=46 (non-zone-aligned) is achieved "
+            "without fine-Y/holey-DMA splitting -- see 7800port.md."
+        ),
+    )
     parser.add_argument("input_png")
     args = parser.parse_args()
 
     zh = args.zone_height
+    y_offset = args.y_offset
     width, height, bit_depth, rows = parse_png(Path(args.input_png))
-    if height % zh != 0:
-        raise ValueError(
-            f"image height {height} is not a multiple of --zone-height {zh}"
-        )
-    num_zones = height // zh
+
+    first_zone = y_offset // zh
+    last_zone = -(-(y_offset + height) // zh) - 1  # inclusive, ceil-div - 1
+    num_zones = last_zone - first_zone + 1
 
     packed_rows = [pack_160a(row_indices(row, width, bit_depth)) for row in rows]
     width_bytes = len(packed_rows[0]) if packed_rows else 0
+    blank_row = [0] * width_bytes
     chunks = split_chunks(width_bytes)
     num_chunks = len(chunks)
 
+    def packed_row_for(zone_index: int, r: int):
+        """packed_rows-style row for local row r (0=top) of on-screen zone
+        (first_zone + zone_index), remapped by y_offset; blank outside the
+        image's own rows."""
+        src_row = (first_zone + zone_index) * zh + r - y_offset
+        if 0 <= src_row < height:
+            return packed_rows[src_row]
+        return blank_row
+
     # Every (zone, chunk) pair is zone-aligned (shift=0), so -- exactly like
     # pack_sprites_to_strided.py packs multiple animation frames into one
-    # set of pages at different per-frame byte offsets -- all num_zones *
-    # num_chunks slices can share a single zone_height-page block, each at
-    # its own byte offset within every page, instead of each getting its
-    # own full zone_height-page block. This is the difference between
-    # needing zone_height*256 bytes total (a few KB) and
-    # num_zones*num_chunks*zone_height*256 bytes (tens of KB, blowing a
-    # 32KB ROM for a banner this size).
+    # set of pages at different per-frame byte offsets -- all zones sharing
+    # one chunk index can share a single zone_height-page block, each zone
+    # at its own byte offset within every page, instead of each getting its
+    # own full zone_height-page block. Chunks get separate blocks (rather
+    # than all packed into one shared block) so a banner spanning more
+    # zones than fits in one 256-byte page (num_zones * width_bytes > 256,
+    # as with a non-zone-aligned banner needing one extra zone) still packs
+    # -- each chunk's own width is capped at MAX_OBJECT_WIDTH_BYTES, so
+    # num_zones * chunk_w alone is far less likely to overflow a page than
+    # num_zones * width_bytes.
     frame_offsets = {}
-    offset = 0
-    for z in range(num_zones):
-        for c, (_start_byte, chunk_w) in enumerate(chunks):
+    bytes_per_page = []
+    for c, (_start_byte, chunk_w) in enumerate(chunks):
+        offset = 0
+        for z in range(num_zones):
             frame_offsets[(z, c)] = offset
             offset += chunk_w
-    bytes_per_page = offset
-    if bytes_per_page > 256:
-        raise ValueError(
-            f"all zones/chunks together need {bytes_per_page} bytes per page, "
-            "which exceeds MARIA's 256-byte page size -- this image is too wide "
-            "to pack this way; split it into multiple banners/palettes"
-        )
+        bytes_per_page.append(offset)
+        if offset > 256:
+            raise ValueError(
+                f"chunk {c} needs {offset} bytes per page across {num_zones} "
+                "zones, which exceeds MARIA's 256-byte page size -- this "
+                "image is too wide/tall to pack this way; split it into "
+                "multiple banners/palettes"
+            )
 
     symbol = args.symbol
     symbol_upper = symbol.upper()
@@ -223,6 +252,12 @@ def main():
     lines.append("")
     lines.append(f"#define {symbol_upper}_WIDTH_PIXELS {width}u")
     lines.append(f"#define {symbol_upper}_ZONE_HEIGHT {zh}u")
+    lines.append(
+        f"#define {symbol_upper}_FIRST_ZONE {first_zone}u /* draw zone 0 at "
+        f"pixel Y = FIRST_ZONE * ZONE_HEIGHT, i.e. y={first_zone * zh}, not "
+        f"the requested y={y_offset} -- the remap already accounts for the "
+        "difference */"
+    )
     lines.append(f"#define {symbol_upper}_NUM_ZONES {num_zones}u")
     lines.append(f"#define {symbol_upper}_NUM_CHUNKS {num_chunks}u")
     lines.append(f"#define {symbol_upper}_MODE 0x40u")
@@ -242,27 +277,27 @@ def main():
     )
     lines.append("")
 
-    # One shared zone_height-page block (no shift padding -- everything here
-    # is drawn zone-aligned) holding every (zone, chunk) slice at its own
-    # byte offset within every page -- see the frame_offsets comment above.
-    # Row r (0 = top of slice) goes at page (zone_height - 1 - r): see the
-    # module docstring for why.
-    lines.append(
-        f"static const uint8_t {symbol}_data[{zh} * 256] "
-        "__attribute__((aligned(256))) = {"
-    )
-    for r in range(zh):
-        page = zh - 1 - r
-        page_bytes = []
-        for z in range(num_zones):
-            src_row = z * zh + r
-            for c, (start_byte, chunk_w) in enumerate(chunks):
-                page_bytes.extend(packed_rows[src_row][start_byte : start_byte + chunk_w])
-        if any(b != 0 for b in page_bytes):
-            vals = ", ".join(f"0x{b:02x}" for b in page_bytes)
-            lines.append(f"  [{page} * 256] = {vals},")
-    lines.append("};")
-    lines.append("")
+    # One shared zone_height-page block per chunk (no shift padding --
+    # everything here is drawn zone-aligned), each holding every zone's
+    # slice of that chunk at its own byte offset within every page -- see
+    # the frame_offsets comment above. Row r (0 = top of slice) goes at page
+    # (zone_height - 1 - r): see the module docstring for why.
+    for c, (start_byte, chunk_w) in enumerate(chunks):
+        lines.append(
+            f"static const uint8_t {symbol}_data{c}[{zh} * 256] "
+            "__attribute__((aligned(256))) = {"
+        )
+        for r in range(zh):
+            page = zh - 1 - r
+            page_bytes = []
+            for z in range(num_zones):
+                row = packed_row_for(z, r)
+                page_bytes.extend(row[start_byte : start_byte + chunk_w])
+            if any(b != 0 for b in page_bytes):
+                vals = ", ".join(f"0x{b:02x}" for b in page_bytes)
+                lines.append(f"  [{page} * 256] = {vals},")
+        lines.append("};")
+        lines.append("")
 
     lines.append(
         f"static const atari7800_sprite_asset_t "
@@ -273,7 +308,7 @@ def main():
         for c, (_start_byte, chunk_w) in enumerate(chunks):
             width_twos_comp = (0x20 - chunk_w) & 0xFF
             lines.append("    {")
-            lines.append(f"      .data = &{symbol}_data[{frame_offsets[(z, c)]}u],")
+            lines.append(f"      .data = &{symbol}_data{c}[{frame_offsets[(z, c)]}u],")
             lines.append(f"      .width_bytes = {chunk_w}u,")
             lines.append(f"      .height_lines = {symbol_upper}_ZONE_HEIGHT,")
             lines.append(f"      .mode = {symbol_upper}_MODE,")

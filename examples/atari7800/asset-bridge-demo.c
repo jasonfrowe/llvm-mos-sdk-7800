@@ -1,5 +1,6 @@
 #include <atari7800.h>
 #include "assets/fighter.sprite.h"
+#include "assets/hud_font.h"
 
 int main(void) {
   atari7800_scene_t scene;

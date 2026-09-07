@@ -212,7 +212,23 @@ typedef struct atari7800_glyph_run {
 
 #define ATARI7800_MARIA_ZONE5_OBJECT_BYTES 5u
 #define ATARI7800_MARIA_ZONE5_TERMINATOR_BYTES 2u
+/* Per-zone object budget in bytes. Header stride is 5 bytes (see
+ * ATARI7800_MARIA_ZONE5_OBJECT_BYTES); a zone of N bytes holds up to
+ * floor((N-2)/5) objects (5-byte headers whose 2-byte terminator overlaps
+ * the next slot's own first 2 bytes -- see atari7800_maria_plot_sprite_zone5).
+ * At the default 64, that's 12 -- confirmed hands-on as a real, silent
+ * truncation point for e.g. a single-zone text glyph run longer than 12
+ * characters (7800port.md, "title screen fidelity pass"). Override
+ * per-program with `#define ATARI7800_SCENE_ZONE_BYTES 96` (or similar)
+ * before `#include <atari7800.h>` -- same "don't bake a bigger-than-
+ * needed default into every program" reasoning as ATARI7800_ZONE_HEIGHT,
+ * since this is a per-TU-compiled (see ATARI7800_NO_SCENE_IMPL below)
+ * constant like that one, not a shared platform-library value: doubling
+ * it doubles this platform's total zone-buffer RAM footprint, real money
+ * on a 4KB machine. */
+#ifndef ATARI7800_SCENE_ZONE_BYTES
 #define ATARI7800_SCENE_ZONE_BYTES 64u
+#endif
 
 static inline uint16_t atari7800_ptr16(const void *ptr) {
 	return (uint16_t)(uintptr_t)ptr;

@@ -22,8 +22,28 @@
 #define ATARI7800_REG_AUDF4  0x0456u
 #define ATARI7800_REG_AUDC4  0x0457u
 #define ATARI7800_REG_AUDCTL 0x0458u
+#define ATARI7800_REG_STIMER 0x0459u
+#define ATARI7800_REG_SKREST 0x045au
+#define ATARI7800_REG_SEROUT 0x045du
+#define ATARI7800_REG_IRQEN  0x045eu
+#define ATARI7800_REG_SKCTL  0x045fu
 
 #define ATARI7800_POKEY_BASE 0x0450u
+
+/**
+ * POKEY's IRQ output is wired to the 6502's IRQ line on this cart type.
+ * IRQEN's reset state is not guaranteed clear, and at least one source
+ * (serial/keyboard-related bits, meaningless on a cart-mounted POKEY with
+ * nothing wired to those pins) can come up already asserted -- observed
+ * hands-on as a total lockup (an IRQ storm: the CPU re-enters the default
+ * `rti`-only IRQ handler as fast as it can return from it, starving the
+ * rest of the program of any real execution time) the instant POKEY
+ * hardware is declared present, before this function existed. Call once,
+ * before any other POKEY register write, to mask every POKEY IRQ source.
+ */
+static inline void atari7800_pokey_init(void) {
+	ATARI7800_MMIO8(ATARI7800_REG_IRQEN) = 0x00u;
+}
 
 /**
  * Advances one frame of a 30Hz POKEY register-stream song (the format used
