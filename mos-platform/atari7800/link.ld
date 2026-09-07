@@ -95,13 +95,15 @@ SECTIONS {
      * $0450" flag, and it's the ONE this SDK's actual test emulator (a7800,
      * a 7800-devtools/a7800 fork) reads for cart-type detection -- it does
      * NOT look at the v4 "audio" field below at all, despite this header
-     * declaring version 4. Setting it at 32 KiB broke rendering outright
-     * (confirmed hands-on: full black screen, cleared instantly by
-     * clearing this bit) -- every real POKEY-equipped astrowing.bas build
-     * is 48 KiB, so __cart_rom_size=48 is required alongside this bit;
-     * re-enabled here on that basis, not yet re-confirmed working at 48K
-     * (see 7800port.md). Same `(flags << 5) & 0x40` mapping as the v4
-     * field: flags=2 (POKEY @ $450) sets bit 6, flags=0 clears it. */
+     * declaring version 4 (both fields are still emitted per the A78 header
+     * spec, which permits/encourages setting both; v4 should take
+     * precedence on any v4-aware tool). Confirmed byte-for-byte identical
+     * to the reference astrowing.bas build's own header at this bit, at
+     * both 32 KiB and 48 KiB -- yet enabling it still crashes this
+     * emulator's CPU within about a second, even in a minimal test program
+     * with no graphics/scene code at all (see 7800port.md #16, and
+     * examples/atari7800/pokey-min/). Root cause is NOT the header, NOT ROM
+     * size, and NOT scene-code complexity -- still unresolved. */
     BYTE(0)
     BYTE((__cart_pokey_flags << 5) & 0x40)
 
@@ -120,10 +122,13 @@ SECTIONS {
     BYTE(0)
 
     /* v4 mapper/audio/interrupt fields: mapper (2 bytes), audio (2 bytes,
-     * low byte bits 0-2 select POKEY location -- see __cart_pokey_flags
-     * above), interrupt (2 bytes). */
+     * big-endian like every other multi-byte header field -- low-order
+     * byte (bits 0-2 select POKEY location) goes SECOND, confirmed against
+     * the reference astrowing.bas build's own header byte-for-byte (a
+     * prior version of this file had these two bytes backwards) --
+     * see __cart_pokey_flags above), interrupt (2 bytes). */
     BYTE(0) BYTE(0)
-    BYTE(__cart_pokey_flags) BYTE(0)
+    BYTE(0) BYTE(__cart_pokey_flags)
     BYTE(0) BYTE(0)
 
     /* Unused2[30]. */

@@ -14,20 +14,26 @@ add_executable(astrowing.a78 astrowing/astrowing.c)
 target_compile_options(astrowing.a78 PRIVATE "-Os")
 install_example(astrowing.a78)
 
+# Minimal POKEY crash repro: 48K + POKEY@450, byte-for-byte identical header
+# to the reference astrowing.bas build (see 7800port.md #16), yet the CPU
+# still crashes within ~1 second even with NO scene/graphics code at all.
+# Kept permanently (not reverted like title-demo/astrowing below) as the
+# smallest possible test case for whoever next investigates this --
+# real hardware, or deeper emulator-side study.
+add_executable(pokey-min.a78 pokey-min/pokey-min.c)
+target_link_options(pokey-min.a78 PRIVATE "-Wl,--defsym=__cart_pokey_flags=2" "-Wl,--defsym=__cart_rom_size=48")
+install_example(pokey-min.a78)
+
 add_executable(title-demo.a78 title-demo/title-demo.c)
 target_compile_options(title-demo.a78 PRIVATE "-Os")
-# 48 KiB, non-bankswitched (just 16KiB more flat ROM than the 32K default,
-# mapped at 0x4000-0x7FFF -- see mos-platform/atari7800/link.ld) + POKEY @
-# $450 are NOT enabled here: confirmed both are required together to match
-# every real POKEY-equipped astrowing.bas build, but the combination
-# crashes outright in this SDK's test emulator (a full black screen, CPU
-# executing garbage) even at 48K -- ruling out ROM size as the actual
-# blocker, and a follow-up IRQ-masking fix (atari7800_pokey_init) didn't
-# resolve it either (confirmed via direct flag inspection that the crash
-# isn't even a maskable-IRQ storm). 48K alone (no POKEY) was confirmed
-# to work correctly. See 7800port.md for the full investigation; this
-# needs more study of the emulator's cart-slot implementation, or real
-# hardware, before enabling POKEY here again.
+# 48K + POKEY@450 NOT enabled here: re-investigated this session (7800port.md
+# #16) with a header now confirmed byte-for-byte identical to the reference
+# astrowing.bas build (a real v4 audio-field byte-order bug was found and
+# fixed along the way) -- the crash persists regardless, including in a
+# minimal 3-line test program (pokey-min.a78, above) with no scene code at
+# all. This rules out both ROM size and the header as the cause. Left
+# disabled pending either real-hardware testing or deeper study of this
+# MAME fork's a78_p450_t0 cart-slot memory-map implementation.
 install_example(title-demo.a78)
 
 option(ATARI7800_ASTROWING_DEBUG_FRAME_BUDGET
