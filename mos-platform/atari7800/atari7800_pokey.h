@@ -30,19 +30,38 @@
 
 #define ATARI7800_POKEY_BASE 0x0450u
 
+/* XCTRL1: a real Atari 7800 console-side register (not part of POKEY
+ * itself) that 7800basic's own POKEY detection/init routine
+ * (pokeysound.asm's detectpokeylocation, `if pokeyaddress = $450` branch)
+ * always writes alongside POKEY setup for a $450-mounted chip. Meaning
+ * undocumented outside 7800basic's own source; included here purely
+ * because the reference always does it. */
+#define ATARI7800_REG_XCTRL1 0x0470u
+
 /**
- * POKEY's IRQ output is wired to the 6502's IRQ line on this cart type.
- * IRQEN's reset state is not guaranteed clear, and at least one source
- * (serial/keyboard-related bits, meaningless on a cart-mounted POKEY with
- * nothing wired to those pins) can come up already asserted -- observed
- * hands-on as a total lockup (an IRQ storm: the CPU re-enters the default
- * `rti`-only IRQ handler as fast as it can return from it, starving the
- * rest of the program of any real execution time) the instant POKEY
- * hardware is declared present, before this function existed. Call once,
- * before any other POKEY register write, to mask every POKEY IRQ source.
+ * Real POKEY init sequence, transcribed from 7800basic's own
+ * detectpokeylocation routine (includes/pokeysound.asm, the `if
+ * pokeyaddress = $450` branch) rather than assumed: this is what every
+ * 7800basic game with `set pokeysupport $450` (astrowing.bas included)
+ * actually does before touching POKEY, not just an IRQEN mask.
+ *
+ * Critically, POKEY's internal clock/counters do not run at all while
+ * SKCTL's low bits are clear ("in reset") -- confirmed in MAME's own
+ * pokey_device::step_one_clock, which only advances its clock counters
+ * `if (m_SKCTL & SK_RESET)`. SKCTL resets to 0 (in reset) and nothing
+ * else in this platform ever wrote it, so POKEY was never actually
+ * running, regardless of IRQEN. The sequence: clear all 16 registers,
+ * set the XCTRL1 enable bits, then explicitly bring the chip out of
+ * reset via SKCTL before touching AUDCTL.
  */
 static inline void atari7800_pokey_init(void) {
-	ATARI7800_MMIO8(ATARI7800_REG_IRQEN) = 0x00u;
+	uint8_t reg;
+	for (reg = 0; reg < 16u; ++reg) {
+		ATARI7800_MMIO8(ATARI7800_POKEY_BASE + reg) = 0x00u;
+	}
+	ATARI7800_MMIO8(ATARI7800_REG_XCTRL1) |= 0x14u;
+	ATARI7800_MMIO8(ATARI7800_REG_SKCTL) = 0x03u;
+	ATARI7800_MMIO8(ATARI7800_REG_AUDCTL) = 0x00u;
 }
 
 /**
@@ -54,17 +73,27 @@ static inline void atari7800_pokey_init(void) {
  * real offset:
  *   0xFF - end of this frame; *cursor is advanced past it, ready for the
  *          next call.
- *   0xFE - end of song; *cursor resets to song_start and playback loops
- *          (does not return early -- continues processing the new frame
- *          from the top of the song in the same call).
+ *   0xFE - end of song; *cursor resets to song_start and returns
+ *          immediately, without processing any bytes from the restarted
+ *          song this call -- matching astrowing.bas's own PlayMusic
+ *          (`.EndSong` resets the pointer and `rts`s; the restarted song's
+ *          first frame isn't read until the *next* call). An earlier
+ *          version of this function instead fell through to keep
+ *          processing the new song in the same call, silently playing an
+ *          extra frame's worth of register writes every time a song
+ *          looped -- fixed to match the reference exactly.
  * Call once every other frame (the data is authored at 30Hz, half the NTSC
  * frame rate) with *cursor initialized to song_start.
  */
 static inline void atari7800_pokey_step(const uint8_t **cursor,
                                         const uint8_t *song_start) {
 	const uint8_t *p = *cursor;
+	/* Matches PlayMusic's own `cpy #64` safety cap: bail out (leaving
+	 * *cursor mid-frame, same as the reference's forced .EndFrame exit)
+	 * rather than looping indefinitely on malformed/corrupt song data. */
+	uint8_t budget = 64u;
 
-	for (;;) {
+	for (; budget != 0u; budget -= 2u) {
 		uint8_t reg = *p;
 
 		if (reg == 0xffu) {
@@ -72,13 +101,14 @@ static inline void atari7800_pokey_step(const uint8_t **cursor,
 			return;
 		}
 		if (reg == 0xfeu) {
-			p = song_start;
-			continue;
+			*cursor = song_start;
+			return;
 		}
 
 		ATARI7800_MMIO8(ATARI7800_POKEY_BASE + reg) = p[1];
 		p += 2;
 	}
+	*cursor = p;
 }
 
 #endif
