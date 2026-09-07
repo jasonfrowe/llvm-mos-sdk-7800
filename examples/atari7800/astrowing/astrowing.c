@@ -90,14 +90,16 @@ static const atari7800_sprite_asset_t bullet_sprite = {
   .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED
 };
 
-/* Starfield stars */
-typedef struct {
-  uint8_t x;
-  uint8_t y;
-  uint8_t color;
-} star_t;
-
-static star_t stars[4];
+/* Starfield stars. Struct-of-arrays, not array-of-structs, per LLVM-MOS's
+ * own optimization guide (https://llvm-mos.org/wiki/Optimization_guide):
+ * indexing a 1-byte array is a plain offset, while indexing an
+ * array-of-3-byte-structs needs a multiply first. Also dropped the
+ * original's third field (per-star "color"): it was write-only -- set in
+ * init_stars but never actually read anywhere, since star_sprite always
+ * draws with palette 4 regardless, and cycle_stars cycles that palette's
+ * own colors globally rather than per-star. */
+static uint8_t star_x[4];
+static uint8_t star_y[4];
 static uint8_t cycle_state = 0;
 static uint16_t frame_count = 0;
 
@@ -185,17 +187,15 @@ static void note_status(uint8_t status) {
   }
 }
 
-void init_stars(void) {
+static void init_stars(void) {
   uint8_t i;
   for (i = 0; i < 4; ++i) {
-    stars[i].x = (uint8_t)((frame_count + i * 37) % 160);
-    stars[i].y = (uint8_t)((frame_count + i * 59) % 192);
-    stars[i].color = (uint8_t)((frame_count + i) & 3);
-    if (stars[i].color == 0) stars[i].color = 1;
+    star_x[i] = (uint8_t)((frame_count + i * 37) % 160);
+    star_y[i] = (uint8_t)((frame_count + i * 59) % 192);
   }
 }
 
-void cycle_stars(void) {
+static void cycle_stars(void) {
   if ((frame_count & 7) != 0) return;
 
   cycle_state++;
@@ -213,7 +213,7 @@ void cycle_stars(void) {
 /* Throttled drift, bouncing off the screen edges. Matches the frame-mask
  * throttle technique astrowing.bas uses for enemy movement speed
  * (`temp_v = frame & enemy_move_mask`), simplified to one enemy. */
-void update_enemy(void) {
+static void update_enemy(void) {
   if ((frame_count & 3u) != 0) return;
 
   enemy_x = (uint8_t)(enemy_x + enemy_dx);
@@ -228,7 +228,7 @@ void update_enemy(void) {
  * (`if bul_x[iter] > 170 then if bul_x[iter] < 240 then blife[iter] = 0`
  * -- a small negative bul_x wraps to just under 256, so ">170 and <240"
  * catches that wrapped range without needing a signed coordinate type). */
-void update_bullets(void) {
+static void update_bullets(void) {
   uint8_t i;
   for (i = 0; i < 4; ++i) {
     if (blife[i] == 0) continue;
@@ -259,7 +259,7 @@ void update_bullets(void) {
  * (astrowing.bas:881-883) are given per current_level, which this port
  * doesn't have yet -- using the level-1 value (25 frames) unconditionally
  * until levels exist. */
-void fire_bullet(void) {
+static void fire_bullet(void) {
   uint8_t i;
   for (i = 0; i < 4; ++i) {
     if (blife[i] == 0) break;
@@ -275,7 +275,7 @@ void fire_bullet(void) {
   bcooldown = 25;
 }
 
-void update_player_input(void) {
+static void update_player_input(void) {
   if (rot_timer > 0) {
     rot_timer--;
   } else {
@@ -300,7 +300,7 @@ void update_player_input(void) {
   }
 }
 
-void apply_friction(void) {
+static void apply_friction(void) {
   if (player_vx > 8) player_vx -= 4;
   else if (player_vx < -8) player_vx += 4;
   else player_vx = 0;
@@ -310,7 +310,7 @@ void apply_friction(void) {
   else player_vy = 0;
 }
 
-void update_scrolling(void) {
+static void update_scrolling(void) {
   scroll_x = 0;
   scroll_y = 0;
 
@@ -345,23 +345,23 @@ void update_scrolling(void) {
   }
 }
 
-void shift_stars(void) {
+static void shift_stars(void) {
   uint8_t i;
   for (i = 0; i < 4; ++i) {
-    stars[i].x = (uint8_t)(stars[i].x - scroll_x);
-    if (stars[i].x > 160 && stars[i].x < 240) stars[i].x = 0;
-    else if (stars[i].x >= 240) stars[i].x = 159;
+    star_x[i] = (uint8_t)(star_x[i] - scroll_x);
+    if (star_x[i] > 160 && star_x[i] < 240) star_x[i] = 0;
+    else if (star_x[i] >= 240) star_x[i] = 159;
 
-    stars[i].y = (uint8_t)(stars[i].y - scroll_y);
-    if (stars[i].y > 192 && stars[i].y < 240) stars[i].y = 0;
-    else if (stars[i].y >= 240) stars[i].y = 191;
+    star_y[i] = (uint8_t)(star_y[i] - scroll_y);
+    if (star_y[i] > 192 && star_y[i] < 240) star_y[i] = 0;
+    else if (star_y[i] >= 240) star_y[i] = 191;
   }
 }
 
 /* Draws a sprite with pixel-fine vertical positioning inside its zone.
  * Shift range matches the full 16-line zone height (y&15, not y&7) -- see
  * star_sprite_data's comment above for why. */
-void draw_sprite_fine(const atari7800_sprite_asset_t *asset, uint8_t x, uint8_t y) {
+static void draw_sprite_fine(const atari7800_sprite_asset_t *asset, uint8_t x, uint8_t y) {
   uint8_t y_offset = y & 15;
   atari7800_sprite_asset_t shifted_asset = *asset;
   shifted_asset.data = (const uint8_t *)((uintptr_t)shifted_asset.data + ((uint16_t)y_offset << 8));
@@ -592,8 +592,8 @@ int main(void) {
     /* Render stars, clipping to gameplay area Y >= 16 to keep the HUD
      * zone clean. */
     for (i = 0; i < 4; ++i) {
-      if (stars[i].y >= 16) {
-        draw_sprite_fine(&star_sprite, stars[i].x, stars[i].y);
+      if (star_y[i] >= 16) {
+        draw_sprite_fine(&star_sprite, star_x[i], star_y[i]);
       }
     }
 
