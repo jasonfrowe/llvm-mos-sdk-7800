@@ -43,6 +43,21 @@ MEMORY {
 
   header   (r) : ORIGIN = 0x0000, LENGTH = 128
   cart_rom (rx) : ORIGIN = 0x10000 - __cart_rom_size * 1024, LENGTH = __cart_rom_size * 1024
+
+  /* Generic .text/.rodata/.data (via c.ld's c_readonly alias below) and
+   * the reset trampoline (.cart_rom_reset_entry, placed right after them
+   * -- see below) share this region, bounded above by the fixed 128-byte
+   * footer at 0xff80. .cart_rom_reset_entry used to be pinned to a fixed
+   * 0xf000 "so 7800sign can hash/sign carts", but nothing in this SDK
+   * actually invokes 7800sign yet, that address was never confirmed
+   * against real 7800sign requirements, and the reference astrowing.bas
+   * build's own reset vector isn't at any suspiciously round address
+   * either ($F54C) -- so this bound is the footer, not an arbitrary
+   * mid-ROM hole, freeing ~4000 bytes that were previously unusable
+   * padding between the old fixed trampoline and the footer. Revisit if
+   * real 7800sign integration turns out to need a specific placement. */
+  cart_rom_code (rx) : ORIGIN = 0x10000 - __cart_rom_size * 1024,
+                        LENGTH = 0xff80 - (0x10000 - __cart_rom_size * 1024)
   ram_low (w)   : ORIGIN = 0x1800, LENGTH = 0x0840
   ram (w)       : ORIGIN = 0x2200, LENGTH = 0x0600
 }
@@ -57,7 +72,7 @@ PROVIDE(nmi = _atari7800_irq_default);
 PROVIDE(irq = _atari7800_irq_default);
 PROVIDE(atari7800_reset_entry = _start);
 
-REGION_ALIAS("c_readonly", cart_rom)
+REGION_ALIAS("c_readonly", cart_rom_code)
 REGION_ALIAS("c_writeable", ram)
 
 SECTIONS {
@@ -143,15 +158,19 @@ SECTIONS {
   } >header
   ASSERT(SIZEOF(.a78_header) == 128, "ATARI 7800: A78 header must be 128 bytes")
 
-  .cart_rom_fixed : { *(.cart_rom_fixed .cart_rom_fixed.*) } >cart_rom
+  .cart_rom_fixed : { *(.cart_rom_fixed .cart_rom_fixed.*) } >cart_rom_code
 
   /*
-   * Place reset entry trampoline in high ROM so 7800sign can hash/sign carts.
-   * The trampoline jumps to the regular C runtime _start.
+   * Reset entry trampoline, jumping to the regular C runtime _start. Not
+   * pinned to a fixed address (see cart_rom_code's own comment above) --
+   * placed wherever it naturally falls right after .text/.rodata/.data,
+   * same region. Still its own KEEP()ed section so it can't be discarded
+   * as unreferenced (nothing but the footer's own SHORT(atari7800_reset_
+   * entry) vector points to it).
    */
-  .cart_rom_reset_entry 0xf000 : {
+  .cart_rom_reset_entry : {
     KEEP(*(.cart_rom_reset_entry .cart_rom_reset_entry.*))
-  } >cart_rom
+  } >cart_rom_code
 
   /*
    * Reserve final 128 bytes for signature/verification data and vectors.

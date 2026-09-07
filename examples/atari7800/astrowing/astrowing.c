@@ -12,6 +12,7 @@
 
 /* Include packed spaceship frames */
 #include "assets/spaceship.h"
+#include "assets/bullet.h"
 
 /* Include HUD font */
 #include "../assets/fighter.sprite.h"
@@ -96,6 +97,34 @@ static uint8_t enemy_x = 130;
 static const uint8_t enemy_y = 32;
 static int8_t enemy_dx = -1;
 
+/* Player bullets (astrowing.bas:78/818-880's bul_x/bul_y/bul_vx/bul_vy/
+ * blife arrays, a pool of 4 -- "Screen Space" bullets per the reference's
+ * own comment: spawned near the ship's fixed screen position and moved by
+ * a constant per-frame velocity, independent of the starfield's own
+ * scroll_x/scroll_y (the ship itself never actually moves on screen
+ * either, see draw_sprite_fine(&ship, 72, 80) below -- movement is the
+ * *world* scrolling under a stationary ship, and bullets fly through that
+ * same screen-space view). blife is a countdown (0 = free slot); bul_vx/
+ * bul_vy are read directly from sin_table/cos_table[angle] like the
+ * player's own thrust vector (update_player_input), so a bullet always
+ * fires in the direction the ship is facing -- matching the reference's
+ * `bul_vx[iter] = sin_table[angle]` / `bul_vy[iter] = -cos_table[angle]`
+ * in direction, but scaled down by 4 in fire_bullet() below: this
+ * platform's existing table has magnitudes up to 24 (vs. the reference's
+ * own, differently-scaled table's 0-6), and at full scale a bullet
+ * crosses the whole screen in under 10 frames and dies off-edge almost
+ * immediately (confirmed hands-on: invisible in every post-fire
+ * screenshot tried). /4 lands close to the reference's own ~6px/frame
+ * feel, reusing the one table already in
+ * this file rather than adding a second, differently-scaled one purely
+ * for bullets. */
+static uint8_t bul_x[4];
+static uint8_t bul_y[4];
+static int8_t bul_vx[4];
+static int8_t bul_vy[4];
+static uint8_t blife[4];
+static uint8_t bcooldown = 0;
+
 /* Scene context global */
 static atari7800_scene_t scene;
 
@@ -163,6 +192,59 @@ void update_enemy(void) {
   if (enemy_x <= 16u || enemy_x >= 144u) {
     enemy_dx = (int8_t)-enemy_dx;
   }
+}
+
+/* astrowing.bas:799-819's update_bullets: per-slot move, then off-screen
+ * and lifetime expiry. Bounds checks transcribed exactly, including the
+ * reference's own unsigned-wraparound idiom for "off the left edge"
+ * (`if bul_x[iter] > 170 then if bul_x[iter] < 240 then blife[iter] = 0`
+ * -- a small negative bul_x wraps to just under 256, so ">170 and <240"
+ * catches that wrapped range without needing a signed coordinate type). */
+void update_bullets(void) {
+  uint8_t i;
+  for (i = 0; i < 4; ++i) {
+    if (blife[i] == 0) continue;
+
+    bul_x[i] = (uint8_t)(bul_x[i] + bul_vx[i]);
+    if (bul_x[i] > 170u && bul_x[i] < 240u) {
+      blife[i] = 0;
+      continue;
+    }
+
+    bul_y[i] = (uint8_t)(bul_y[i] + bul_vy[i]);
+    if (bul_y[i] > 200u) {
+      blife[i] = 0;
+      continue;
+    }
+
+    --blife[i];
+  }
+}
+
+/* astrowing.bas:824-880's fire_bullet/spawn_bullet, merged into one
+ * function since this port has no separate gosub/return control flow to
+ * preserve. Spawns from the ship's own fixed screen position (72, 80;
+ * matches draw_sprite_fine(&ship, 72, 80) below -- see the bul_* fields'
+ * own comment for why bullets are screen-space, not world-space) offset
+ * by +6,+6 to originate from roughly the ship sprite's center, same as
+ * the reference's `bul_x[iter] = px + 6`. Cooldown thresholds
+ * (astrowing.bas:881-883) are given per current_level, which this port
+ * doesn't have yet -- using the level-1 value (25 frames) unconditionally
+ * until levels exist. */
+void fire_bullet(void) {
+  uint8_t i;
+  for (i = 0; i < 4; ++i) {
+    if (blife[i] == 0) break;
+  }
+  if (i == 4) return; /* no free slot */
+
+  blife[i] = 60;
+  bul_x[i] = (uint8_t)(72 + 6);
+  bul_y[i] = (uint8_t)(80 + 6);
+  bul_vx[i] = (int8_t)(sin_table[angle] / 4);
+  bul_vy[i] = (int8_t)(-cos_table[angle] / 4);
+
+  bcooldown = 25;
 }
 
 void update_player_input(void) {
@@ -432,6 +514,12 @@ int main(void) {
     cycle_stars();
     update_enemy();
 
+    /* astrowing.bas:560-562: `if bcooldown > 0 then bcooldown = bcooldown
+     * - 1` then `if joy0fire1 && bcooldown = 0 then gosub fire_bullet`. */
+    if (bcooldown > 0) --bcooldown;
+    if (ATARI7800_JOY0FIRE1() && bcooldown == 0) fire_bullet();
+    update_bullets();
+
     atari7800_scene_wait_display_safe();
 
 #ifdef ATARI7800_DEBUG_FRAME_BUDGET
@@ -466,6 +554,13 @@ int main(void) {
     atari7800_sprite_asset_t ship = spaceship_frames[angle];
     ship.palette = 5; /* Use Palette 5 (Spaceship) */
     draw_sprite_fine(&ship, 72, 80);
+
+    /* astrowing.bas:2445-2459's draw_player_bullets. */
+    for (i = 0; i < 4; ++i) {
+      if (blife[i] != 0) {
+        draw_sprite_fine(&bullet_sprite, bul_x[i], bul_y[i]);
+      }
+    }
 
     /* Enemy: fighter_sprite has no fine-Y padding (unlike star_sprite_data
      * / spaceship_data), so it's drawn at a fixed, zone-aligned Y directly
