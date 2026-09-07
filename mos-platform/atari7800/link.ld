@@ -10,6 +10,17 @@ PROVIDE(__cart_rom_size = 32);
 ASSERT(__cart_rom_size == 32,
        "ATARI 7800: Initial target currently supports only 32 KiB ROM");
 
+/* POKEY declaration for the .a78 header's v4 "audio" field (low byte,
+ * bits 0-2): 0 = none (default, every program that doesn't override this),
+ * 2 = POKEY @ $450. Override per-program with
+ * `-Wl,--defsym=__cart_pokey_flags=2` rather than changing this default --
+ * see the ATARI7800_ZONE_HEIGHT lesson in 7800port.md for why a hardware
+ * assumption like this must not be baked into the shared header skeleton
+ * every example inherits. Legacy v3 cart-type POKEY bits are deliberately
+ * left at 0: this SDK's header declares version 4, and the A78 header spec
+ * says v4 fields take precedence on any v4-aware emulator/flashcart. */
+PROVIDE(__cart_pokey_flags = 0);
+
 /* Keep this in writable RAM; stack grows downward. */
 PROVIDE(__stack = 0x2800);
 
@@ -66,7 +77,22 @@ SECTIONS {
     BYTE((__cart_rom_size * 1024 >> 8) & 0xff)
     BYTE((__cart_rom_size * 1024 >> 0) & 0xff)
 
-    /* v3 carttype bytes. */
+    /* v3 carttype bytes. Byte 54 bit 6 [0x40] is the legacy "POKEY at
+     * $0450" flag, and it's the ONE this SDK's actual test emulator (a7800,
+     * a 7800-devtools/a7800 fork) reads for cart-type detection -- it does
+     * NOT look at the v4 "audio" field below at all, despite this header
+     * declaring version 4. Deliberately left at 0 (not derived from
+     * __cart_pokey_flags) anyway: setting that bit switches this
+     * emulator's cart-slot device to its "a78_p450_t0" class
+     * (a78_slot.cpp), which broke this platform's basic ROM/RAM layout
+     * outright (confirmed hands-on: title-demo rendered a fully black
+     * screen with the bit set, and rendered correctly again the instant it
+     * was cleared, v4 field unchanged) -- not investigated further since
+     * correct rendering matters more than an audible POKEY in this one
+     * emulator fork. The v4 field below is still set correctly per spec,
+     * for real hardware or any v4-aware tool; POKEY code written against
+     * it (atari7800_pokey.h) is untested for actual sound in this
+     * environment as a result -- see 7800port.md. */
     BYTE(0)
     BYTE(0)
 
@@ -84,8 +110,12 @@ SECTIONS {
     /* XM expansion. */
     BYTE(0)
 
-    /* v4 mapper/audio/interrupt fields. */
-    BYTE(0) BYTE(0) BYTE(0) BYTE(0) BYTE(0) BYTE(0)
+    /* v4 mapper/audio/interrupt fields: mapper (2 bytes), audio (2 bytes,
+     * low byte bits 0-2 select POKEY location -- see __cart_pokey_flags
+     * above), interrupt (2 bytes). */
+    BYTE(0) BYTE(0)
+    BYTE(__cart_pokey_flags) BYTE(0)
+    BYTE(0) BYTE(0)
 
     /* Unused2[30]. */
     . = . + 30;

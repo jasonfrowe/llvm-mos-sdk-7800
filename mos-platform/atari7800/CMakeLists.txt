@@ -4,7 +4,7 @@ if(NOT CMAKE_CROSSCOMPILING)
   return()
 endif()
 
-install(FILES atari7800.h TYPE INCLUDE)
+install(FILES atari7800.h atari7800_pokey.h TYPE INCLUDE)
 
 add_platform_library(atari7800-crt0
   reset.S
