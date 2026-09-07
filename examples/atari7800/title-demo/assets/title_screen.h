@@ -9,7 +9,7 @@
 #define TITLE_SCREEN_NUM_ZONES 6u
 #define TITLE_SCREEN_NUM_CHUNKS 2u
 #define TITLE_SCREEN_MODE 0x40u
-#define TITLE_SCREEN_DEFAULT_PALETTE 0u
+#define TITLE_SCREEN_DEFAULT_PALETTE 7u
 #define TITLE_SCREEN_DATA_LAYOUT ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED
 
 /* Pixel X offset of each of the 2 side-by-side chunks a 160px-wide row is split into (MARIA's width field caps a single object at 124px -- see MAX_OBJECT_WIDTH_BYTES in png_banner_to_zones_header.py). Draw chunk c of zone z at (base_x + chunk_x_offsets[c], base_y + z * ZONE_HEIGHT). */
