@@ -3,7 +3,12 @@
  * cutting per-zone overhead, and let a full 16-line-tall sprite (the
  * player ship) live in a single zone as one real object. */
 #define ATARI7800_ZONE_HEIGHT 16
+/* DIFFICULTY+PRO and VERSION+date (title screen) each need more than the
+ * default 64-byte/12-glyph zone budget -- see title_screen_loop below and
+ * 7800port.md #14 for how this was confirmed, not assumed. */
+#define ATARI7800_SCENE_ZONE_BYTES 96
 #include <atari7800.h>
+#include <atari7800_pokey.h>
 
 /* Include packed spaceship frames */
 #include "assets/spaceship.h"
@@ -11,6 +16,11 @@
 /* Include HUD font */
 #include "../assets/fighter.sprite.h"
 #include "../assets/hud_font.h"
+
+/* Title screen banner + music, shared with title-demo.c (see 7800port.md
+ * #13-#19 for how these were derived/verified) rather than duplicated. */
+#include "../title-demo/assets/song_title.h"
+#include "../title-demo/assets/title_screen.h"
 
 /* Aligned 16-bit sine/cosine tables for ship physics */
 static const int16_t sin_table[16] = {
@@ -249,8 +259,127 @@ void draw_sprite_fine(const atari7800_sprite_asset_t *asset, uint8_t x, uint8_t 
   note_status(atari7800_scene_draw_sprite(&scene, &shifted_asset, x, y));
 }
 
+/* ---- Title screen (astrowing.bas:326-397's title_loop, ported) ----
+ * Runs to completion before gameplay's own atari7800_scene_init_160a call
+ * below re-initializes the scene from scratch, so nothing here needs to be
+ * torn down explicitly -- see title-demo.c (examples/atari7800/title-demo/)
+ * for this same banner/text/music layout as a standalone, more heavily
+ * commented reference. */
+static atari7800_glyph_run_entry_t score_glyphs[8];
+static atari7800_glyph_run_t score_run;
+static atari7800_glyph_run_entry_t icon_glyphs[8];
+static atari7800_glyph_run_t icon_run;
+static atari7800_glyph_run_entry_t difficulty_glyphs[16];
+static atari7800_glyph_run_t difficulty_run;
+static atari7800_glyph_run_entry_t pro_glyphs[8];
+static atari7800_glyph_run_t pro_run;
+static atari7800_glyph_run_entry_t version_glyphs[8];
+static atari7800_glyph_run_t version_run;
+static atari7800_glyph_run_entry_t date_glyphs[8];
+static atari7800_glyph_run_t date_run;
+
+static void title_screen_loop(void) {
+  uint8_t zone_index;
+  uint8_t chunk_index;
+  uint16_t title_frame = 0;
+  const uint8_t *music_cursor = song_title;
+  atari7800_font_descriptor_t hud_font_p0 = hud_font; /* Background/UI */
+  atari7800_font_descriptor_t hud_font_p1 = hud_font; /* Player Bullets, green */
+  atari7800_font_descriptor_t hud_font_p7 = hud_font; /* Title Screen, hue-cycled */
+  hud_font_p0.glyph_palette = 0u;
+  hud_font_p1.glyph_palette = 1u;
+  hud_font_p7.glyph_palette = 7u;
+
+  atari7800_pokey_init();
+  atari7800_scene_init_160a(&scene, 0x00u /* BACKGRND, astrowing.bas:281 */);
+
+  atari7800_scene_set_palette(&scene, 0u,
+      (atari7800_palette3_t){0x26, 0x24, 0x04}); /* Background/UI */
+  atari7800_scene_set_palette(&scene, 1u,
+      (atari7800_palette3_t){0xc2, 0xc6, 0xca}); /* Player Bullets (Green) */
+  atari7800_scene_set_palette(&scene, 5u,
+      (atari7800_palette3_t){0x34, 0x86, 0x0a}); /* Spaceship */
+  atari7800_scene_set_palette(&scene, TITLE_SCREEN_DEFAULT_PALETTE,
+      (atari7800_palette3_t){0xc8, 0x46, 0x1c}); /* Title Screen (Vibrant) */
+
+  atari7800_scene_begin_frame(&scene);
+
+  for (zone_index = 0; zone_index < TITLE_SCREEN_NUM_ZONES; ++zone_index) {
+    uint8_t y = (uint8_t)((TITLE_SCREEN_FIRST_ZONE + zone_index) *
+                           TITLE_SCREEN_ZONE_HEIGHT);
+    for (chunk_index = 0; chunk_index < TITLE_SCREEN_NUM_CHUNKS; ++chunk_index) {
+      atari7800_scene_draw_sprite(&scene,
+          &title_screen_zones[zone_index][chunk_index],
+          title_screen_chunk_x_offsets[chunk_index], y);
+    }
+    atari7800_scene_set_zone_static(&scene, y, 1u);
+  }
+
+  atari7800_build_glyph_run(&hud_font_p0, "000000", score_glyphs, 8u,
+      &score_run);
+  atari7800_scene_draw_glyph_run(&scene, &hud_font_p0, 56u, 0u, &score_run);
+  atari7800_scene_set_zone_static(&scene, 0u, 1u);
+
+  atari7800_build_glyph_run(&hud_font_p7, "*+-/<", icon_glyphs, 8u,
+      &icon_run);
+  atari7800_scene_draw_glyph_run(&scene, &hud_font_p7, 60u, 16u, &icon_run);
+  atari7800_scene_set_zone_static(&scene, 16u, 1u);
+
+  atari7800_build_glyph_run(&hud_font_p1, "DIFFICULTY", difficulty_glyphs,
+      16u, &difficulty_run);
+  atari7800_scene_draw_glyph_run(&scene, &hud_font_p1, 20u, 144u,
+      &difficulty_run);
+  atari7800_build_glyph_run(&hud_font, "PRO", pro_glyphs, 8u, &pro_run);
+  atari7800_scene_draw_glyph_run(&scene, &hud_font, 108u, 144u, &pro_run);
+  atari7800_scene_set_zone_static(&scene, 144u, 1u);
+
+  atari7800_build_glyph_run(&hud_font_p1, "VERSION", version_glyphs, 8u,
+      &version_run);
+  atari7800_scene_draw_glyph_run(&scene, &hud_font_p1, 12u, 176u,
+      &version_run);
+  atari7800_build_glyph_run(&hud_font_p1, "20260126", date_glyphs, 8u,
+      &date_run);
+  atari7800_scene_draw_glyph_run(&scene, &hud_font_p1, 84u, 176u, &date_run);
+  atari7800_scene_set_zone_static(&scene, 176u, 1u);
+
+  atari7800_scene_end_frame(&scene);
+
+  /* astrowing.bas:330 `if joy0fire1 || switchreset then goto
+   * title_release_wait` -- exits on fire, then debounces until release
+   * (title_release_wait, astrowing.bas:399-404) so the same press doesn't
+   * immediately register as an in-game action (e.g. firing a bullet) the
+   * instant gameplay starts. switchreset (the console RESET switch) isn't
+   * wired up on this platform yet -- fire is the only way in for now. */
+  for (;;) {
+    atari7800_wait_vblank();
+    ++title_frame;
+
+    if ((title_frame & 1u) == 0u) {
+      atari7800_pokey_step(&music_cursor, song_title);
+    }
+
+    {
+      uint8_t temp_acc = (uint8_t)(title_frame >> 2);
+      uint8_t c1 = (uint8_t)(((12u + temp_acc) & 15u) << 4 | 8u);
+      uint8_t c2 = (uint8_t)(((4u + temp_acc) & 15u) << 4 | 6u);
+      uint8_t c3 = (uint8_t)(((1u + temp_acc) & 15u) << 4 | 12u);
+      atari7800_scene_set_palette(&scene, TITLE_SCREEN_DEFAULT_PALETTE,
+          (atari7800_palette3_t){c1, c2, c3});
+    }
+
+    if (ATARI7800_JOY0FIRE1()) {
+      break;
+    }
+  }
+  while (ATARI7800_JOY0FIRE1()) {
+    atari7800_wait_vblank();
+  }
+}
+
 int main(void) {
   uint8_t i;
+
+  title_screen_loop();
 
   /* Initialize system with background color */
   atari7800_scene_init_160a(&scene, ATARI7800_BG_DARKGRAY);

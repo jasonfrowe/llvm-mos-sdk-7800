@@ -67,6 +67,14 @@
 #define ATARI7800_SWCHA_DOWN  0x20u
 #define ATARI7800_SWCHA_UP    0x10u
 
+/* INPT4/INPT5 (joystick 0/1 fire button) bit 7 is active-low, matching
+ * 7800basic's joy0fire1/joy1fire1: 0 while held, 1 while released.
+ * Confirmed against this SDK's test emulator's own driver source
+ * (a7800.cpp's INPT4/5 read case: `(joy_r() & 0x20) ? 0x80 : 0x00`). */
+#define ATARI7800_INPT_FIRE 0x80u
+#define ATARI7800_JOY0FIRE1() ((ATARI7800_INPT4 & ATARI7800_INPT_FIRE) == 0u)
+#define ATARI7800_JOY1FIRE1() ((ATARI7800_INPT5 & ATARI7800_INPT_FIRE) == 0u)
+
 /* CTRL register bits/modes. */
 #define ATARI7800_CTRL_MODE_160A 0x00u
 #define ATARI7800_CTRL_MODE_160B 0x80u

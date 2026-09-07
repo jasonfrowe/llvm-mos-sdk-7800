@@ -12,6 +12,10 @@ install_example(asset-bridge-demo.a78)
 
 add_executable(astrowing.a78 astrowing/astrowing.c)
 target_compile_options(astrowing.a78 PRIVATE "-Os")
+# 48K + POKEY@450: astrowing.c now opens on the real title screen (with its
+# music) before handing off to gameplay on a fire-button press -- same
+# config as title-demo.a78, needed for the same reasons (7800port.md #19).
+target_link_options(astrowing.a78 PRIVATE "-Wl,--defsym=__cart_pokey_flags=2" "-Wl,--defsym=__cart_rom_size=48")
 install_example(astrowing.a78)
 
 # Minimal POKEY crash repro: 48K + POKEY@450, byte-for-byte identical header
