@@ -566,6 +566,47 @@ static void draw_sprite_fine(const atari7800_sprite_asset_t *asset, uint8_t x, u
   (void)atari7800_scene_draw_sprite(&scene, &shifted_asset, x, y);
 }
 
+/* A single MARIA Direct Mode object's render window is exactly one
+ * 16-line zone -- whichever zone it's placed in (y>>4), only that zone's
+ * own 16 scanlines are ever scanned from it, regardless of shift. An
+ * object taller than what's left between its start row and the zone's
+ * bottom edge gets silently truncated at the boundary, not wrapped or
+ * split across a second zone -- confirmed hands-on (7800port.md #28) as
+ * real corruption/vanishing on the enemy sprite once it started moving
+ * under real AI, not a hypothetical. astrowing.bas's own EnableObject/
+ * SetObjectY macros hit the identical constraint, which is why they only
+ * support two discrete positions (top-half/bottom-half) within a zone for
+ * an object that doesn't fill it, not arbitrary fine-Y.
+ *
+ * A true two-object split (rendering the overflow as a second object
+ * placed in the next zone) turns out to need a genuinely separate,
+ * non-shared data array per sprite: the shared 31-page envelope's own
+ * 16-page read window is too large relative to its 31-page total span to
+ * add continuation content without that content also becoming reachable
+ * -- and visible -- from the *first* object's own unused rows, a
+ * different corruption in the same family. Deferred as real, separate
+ * engineering (would need its own dedicated array, not sharing
+ * misc_sprite_data's page space); instead, clamp the drawn Y so a sprite
+ * never straddles a zone line, snapping to whichever safe position is
+ * closer. Trades a small (<=4px) positional snap as an enemy crosses a
+ * zone boundary for never showing a truncated sprite. */
+static uint8_t zone_safe_y_8(uint8_t y) {
+  uint8_t in_zone = (uint8_t)(y & 15u);
+  if (in_zone <= 8u) return y;
+  if (in_zone <= 12u) return (uint8_t)((y & 0xf0u) | 8u);
+  return (uint8_t)((y & 0xf0u) + 16u);
+}
+
+/* Same constraint, but a 16-line-tall sprite (fighter_explode_frames)
+ * only ever fits its zone at shift 0 exactly -- any other position always
+ * needs a split, so there's no partial safe range to round into like the
+ * 8-line case above. Always zone-align. Acceptable for an already-brief,
+ * visually chaotic 18-frame explosion in a way it wouldn't be for the
+ * continuously-visible, smoothly-moving live enemy sprite. */
+static uint8_t zone_safe_y_16(uint8_t y) {
+  return (uint8_t)(y & 0xf0u);
+}
+
 /* fighter_explode_frames/fighter_explode_data (assets/fighter_explode.h,
  * 8KiB) don't fit in the fixed region alongside everything else needed
  * every frame -- moved to switchable bank 1, since explosions are brief
@@ -872,13 +913,16 @@ int main(void) {
      * outside the visible area, since enemy_x/y are int16_t and can go
      * negative or past 255 (spawn positions do, by design). */
     for (i = 0; i < 4; ++i) {
+      uint8_t draw_y;
+
       if (enemy_life[i] == 0) continue;
       if (enemy_x[i] < 0 || enemy_x[i] > 159 || enemy_y[i] < 16 || enemy_y[i] > 191) {
         continue;
       }
 
       if (enemy_life[i] == 1u) {
-        draw_sprite_fine(&enemy_sprite, (uint8_t)enemy_x[i], (uint8_t)enemy_y[i]);
+        draw_y = zone_safe_y_8((uint8_t)enemy_y[i]);
+        draw_sprite_fine(&enemy_sprite, (uint8_t)enemy_x[i], draw_y);
       } else {
         /* astrowing.bas:2484-2489: frame = (18 - elife) / 2. Clamped to 7
          * (the last real frame): the reference's own arithmetic reaches 8
@@ -892,7 +936,7 @@ int main(void) {
          * banked_call_8000, passing arguments through globals. */
         explode_draw_frame = frame_index;
         explode_draw_x = (uint8_t)enemy_x[i];
-        explode_draw_y = (uint8_t)enemy_y[i];
+        explode_draw_y = zone_safe_y_16((uint8_t)enemy_y[i]);
         banked_call_8000(1, draw_explosion_bank1);
       }
     }
