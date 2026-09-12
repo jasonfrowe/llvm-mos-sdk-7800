@@ -14,10 +14,6 @@
 /* Include packed spaceship frames */
 #include "assets/spaceship.h"
 
-/* Explosion animation (regular enemy sprite itself is folded into
- * misc_sprite_data below, alongside star/bullet -- see its own comment). */
-#include "assets/fighter_explode.h"
-
 /* Include HUD font. This example lives under examples/atari7800-supergame/
  * (a different platform's example tree from these shared assets, which
  * stay under examples/atari7800/assets/ since they're also used by
@@ -39,53 +35,93 @@ static const int16_t cos_table[16] = {
   24, 24, 16, 8, 0, -8, -16, -24, -24, -24, -16, -8, 0, 8, 16, 24
 };
 
-/* Page-aligned 1-pixel star sprite with a single reference point, positioned
- * anywhere in its 16-line zone via draw_sprite_fine's y&15 shift trick (see
- * fighter_sprite_data's comment in fighter.sprite.h for the underlying
- * "vertically flipped scanline countdown" mechanism this relies on -- the
- * same relationship generalized from the platform's old, broken 8-line
- * zones: pixel at the LAST page, shift range covering the full zone
- * height). A single Direct Mode object's render window always spans the
- * *zone's* full declared height (16 pages here) regardless of the object's
- * own declared height_lines, no matter which shift is used -- this used to
- * be two separate 8-line-window references (one per zone half) to work
- * around a since-fixed platform bug where zones were secretly only 8 lines
- * tall; with real 16-line zones, both references' windows always spanned
- * both pixels at once, doubling every star. Needs pages 0-30 (shift ranges
- * 0-15, window is [shift, shift+15], so the pixel at page 15 must stay
- * reachable up to shift=15 i.e. window [15,30]) -- pages 16-30 are explicit
- * trailing padding, not reachable ROM garbage.
+/* Shared, crossing-capable sprite ROM block for every dynamically
+ * positioned sprite in gameplay: star, bullet, enemy, and all 8 explosion
+ * frames, as byte-columns 0/1/2-3/4-11 respectively. Fixed ROM
+ * (cart_rom_fixed_hi_extra), always mapped -- NOT a switchable bank.
+ * MARIA reads whichever bank is actually resident at the moment it scans
+ * a zone, independent of whatever the CPU was doing when that zone's
+ * object headers were written; a switchable-bank placement here was
+ * tried and, empirically, reproducibly crashes at boot regardless of
+ * array size/content (isolated via a clean single-attribute A/B test --
+ * only the section changed between a crashing and a working build), for
+ * reasons not fully root-caused. Given fixed placement is also the
+ * architecturally-correct choice (this data must stay resident for the
+ * program's entire gameplay session, alongside other simultaneously-live
+ * banked content), that's not a loss -- see 7800port.md #30. This is
+ * comfortably at/above the $8000 threshold docs/7800basic.html documents
+ * for glitch-free fine-Y sprite movement ("Maria not implementing the
+ * DMA hole feature at memory locations below $8000") -- never put this
+ * kind of data in cart_rom_fixed_lo ($4000-$7FFF).
  *
- * Shares its 31-page block with bullet_sprite (below) rather than each
- * getting an independent 7936-byte array: both need the exact same
- * 31-page fine-Y envelope (utils/pack_sprites_to_strided.py generates
- * this identical envelope regardless of a sprite's own height -- see its
- * own comment, fixed in 7800port.md #27), so an extra byte-column
- * "channel" in the same pages costs nothing extra -- same technique as
- * spaceship_data's 16 frames or title_screen_data's chunks sharing one
- * block, just with 2 tiny sprites instead of many animation frames. This
- * one change was needed to fit the level-1 music (song_level1) within
- * 48K's actual usable ROM budget -- see 7800port.md #22.
+ * Every column uses the same "vertically flipped scanline countdown"
+ * anchor: real content occupies pages [15,22] (page = 22 - row, i.e. the
+ * same page = 15 - row anchor as the original single-object scheme,
+ * shifted +7 -- see the next paragraph for why), regardless of a
+ * sprite's own real height, so col.data always points at page 7 (this
+ * block's own "shift=0" origin) and draw_sprite_at_shift's page_shift
+ * parameter -7..+15 reaches everything correctly for both zone-crossing
+ * objects. Pages 0-14 and 23-37 are explicit padding, not reachable ROM
+ * garbage: pages 23-37 (the usual 15-page trailing margin, letting shift
+ * up to +15 stay in-bounds) and pages 0-14 (7 *leading* pages, needed
+ * because the zone-crossing second object's own address is a *negative*
+ * page offset from this same base -- see draw_sprite_zone_aware) are
+ * both real, present, zeroed ROM. Verified against actual MARIA zone RAM
+ * for a live crossing case in 7800port.md #29/#30, not just derived by
+ * hand.
  *
- * enemy_sprite used to share a third byte-column here (7800port.md #27),
- * but moving under real AI exercises the *whole* y&15 shift range,
- * including positions that cross a zone boundary -- correctly rendering
- * those needs a second Direct Mode object reading data from *before* this
- * array's own page 0 (see draw_sprite_at_shift's comment), which isn't
- * expressible while sharing this block's fixed page range with star/
- * bullet. Given its own dedicated, differently-padded array instead:
- * enemy_sprite_tall_data, bank 1, below. */
-static const uint8_t misc_sprite_data[31 * 256] __attribute__((aligned(256)))
+ * Explosion frames (fighter_explode_NN_conv.png, palette 3, matching
+ * astrowing.bas's own `plotsprite fighter_explode_NN_conv 3 ...`): every
+ * one of the 8 source frames was checked directly -- despite a 16-row
+ * source canvas, real content is confined to rows 0-7 in all 8 (rows
+ * 8-15 are always blank), so they fit this exact same 8-row envelope as
+ * the enemy sprite, needing no separate/taller treatment. Bytes below
+ * are transcribed from utils/pack_sprites_to_strided.py's own prior
+ * output for this asset (7800port.md #26), just relocated into this
+ * shared block's column/page scheme instead of a dedicated array. */
+static const uint8_t shared_sprite_data[38 * 256] __attribute__((aligned(256)))
     __attribute__((section(".cart_rom_fixed_hi_extra.rodata"))) = {
-  [15 * 256 + 0] = 0x40, /* star, page 15: pixel */
-  [12 * 256 + 1] = 0x14, /* bullet, page 12: row 3 */
-  [13 * 256 + 1] = 0x14, /* bullet, page 13: row 2 */
-  [14 * 256 + 1] = 0x14, /* bullet, page 14: row 1 */
-  [15 * 256 + 1] = 0x14, /* bullet, page 15: row 0 (top) */
+  /* row 7 (bottom): enemy blank; explosion frames 0-7 */
+  [15 * 256 + 4] = 0x3c, [15 * 256 + 5] = 0x3c, [15 * 256 + 6] = 0x28,
+  [15 * 256 + 7] = 0x28, [15 * 256 + 8] = 0x28, [15 * 256 + 9] = 0x2c,
+  [15 * 256 + 10] = 0x18, [15 * 256 + 11] = 0x04,
+  /* row 6: enemy; explosion frames 0-7 */
+  [16 * 256 + 2] = 0x03, [16 * 256 + 3] = 0xc0,
+  [16 * 256 + 4] = 0x3c, [16 * 256 + 5] = 0x3c, [16 * 256 + 6] = 0x28,
+  [16 * 256 + 7] = 0x28, [16 * 256 + 8] = 0x28, [16 * 256 + 9] = 0x2c,
+  [16 * 256 + 10] = 0x18, [16 * 256 + 11] = 0x04,
+  /* row 5: enemy; explosion frames 0-7 */
+  [17 * 256 + 2] = 0x3f, [17 * 256 + 3] = 0xfc,
+  [17 * 256 + 4] = 0xff, [17 * 256 + 5] = 0xeb, [17 * 256 + 6] = 0xae,
+  [17 * 256 + 7] = 0xbe, [17 * 256 + 8] = 0x96, [17 * 256 + 9] = 0xd7,
+  [17 * 256 + 10] = 0x52, [17 * 256 + 11] = 0x41,
+  /* row 4: enemy; explosion frames 0-7 */
+  [18 * 256 + 2] = 0x3f, [18 * 256 + 3] = 0xfc,
+  [18 * 256 + 4] = 0xff, [18 * 256 + 5] = 0xeb, [18 * 256 + 6] = 0xae,
+  [18 * 256 + 7] = 0xbe, [18 * 256 + 8] = 0x96, [18 * 256 + 9] = 0xd7,
+  [18 * 256 + 10] = 0x52, [18 * 256 + 11] = 0x41,
+  /* row 3: bullet; enemy; explosion frames 0-7 */
+  [19 * 256 + 1] = 0x14, [19 * 256 + 2] = 0x0f, [19 * 256 + 3] = 0xf0,
+  [19 * 256 + 4] = 0x14, [19 * 256 + 5] = 0x14, [19 * 256 + 6] = 0x28,
+  [19 * 256 + 7] = 0x28, [19 * 256 + 8] = 0xbe, [19 * 256 + 9] = 0x96,
+  [19 * 256 + 10] = 0x45, [19 * 256 + 11] = 0x01,
+  /* row 2: bullet; enemy; explosion frames 0-7 */
+  [20 * 256 + 1] = 0x14, [20 * 256 + 2] = 0x0a, [20 * 256 + 3] = 0x50,
+  [20 * 256 + 4] = 0x14, [20 * 256 + 5] = 0x14, [20 * 256 + 6] = 0x28,
+  [20 * 256 + 7] = 0x28, [20 * 256 + 8] = 0xbe, [20 * 256 + 9] = 0x96,
+  [20 * 256 + 10] = 0x45, [20 * 256 + 11] = 0x01,
+  /* row 1: bullet; enemy; explosion frames 4-7 (0-3 blank at this row) */
+  [21 * 256 + 1] = 0x14, [21 * 256 + 2] = 0x02, [21 * 256 + 3] = 0x40,
+  [21 * 256 + 8] = 0x28, [21 * 256 + 9] = 0x38,
+  [21 * 256 + 10] = 0x24, [21 * 256 + 11] = 0x10,
+  /* row 0 (top): star; bullet; enemy blank; explosion frames 4-7 */
+  [22 * 256 + 0] = 0x40, [22 * 256 + 1] = 0x14,
+  [22 * 256 + 8] = 0x28, [22 * 256 + 9] = 0x38,
+  [22 * 256 + 10] = 0x24, [22 * 256 + 11] = 0x10,
 };
 
 static const atari7800_sprite_asset_t star_sprite = {
-  .data = &misc_sprite_data[0],
+  .data = &shared_sprite_data[7 * 256 + 0],
   .width_bytes = 1u,
   .height_lines = 8u,
   .mode = 0x40u,
@@ -99,7 +135,7 @@ static const atari7800_sprite_asset_t star_sprite = {
  * pack_160a([0,1,1,0])), the rest of the 16-line canvas is blank.
  * Palette 1 ("Player Bullets"), matching `plotsprite bullet_conv 1 ...`. */
 static const atari7800_sprite_asset_t bullet_sprite = {
-  .data = &misc_sprite_data[1],
+  .data = &shared_sprite_data[7 * 256 + 1],
   .width_bytes = 1u,
   .height_lines = 8u,
   .mode = 0x40u,
@@ -267,7 +303,14 @@ static void cycle_stars(void) {
  * updates every other frame (astrowing.bas:894-895's `frame &
  * enemy_move_mask`, default 1 at astrowing.bas:285 -- no difficulty system
  * exists yet, so this is the only rate used); enemy firing (astrowing.bas:
- * 1030-1039) is deferred with the rest of the enemy-bullet system. */
+ * 1030-1039) is deferred with the rest of the enemy-bullet system.
+ *
+ * Bank 1 (reached via banked_call_8000, mapper.h), not fixed ROM: this is
+ * pure CPU-synchronous logic (reads/writes ordinary RAM globals, no MARIA
+ * side effects), so unlike shared_sprite_data it's completely safe to
+ * bank-switch in and back out around -- freeing fixed-ROM room for the
+ * graphics that must stay resident there instead. See 7800port.md #30. */
+__attribute__((section(".cart_rom_bank_1.text")))
 static void update_enemy(void) {
   uint8_t i;
 
@@ -536,8 +579,8 @@ static void shift_stars(void) {
 
 /* Shifts asset.data by an explicit signed page count (not derived from Y)
  * and draws at (x,y). draw_sprite_fine (below) is the common case, where
- * the shift is simply y&15; the enemy zone-crossing split (draw_enemy,
- * bank 1) needs a second object whose shift is (y&15)-16 -- a *negative*
+ * the shift is simply y&15; the zone-crossing split (draw_sprite_zone_aware,
+ * below) needs a second object whose shift is (y&15)-16 -- a *negative*
  * page offset from the same base pointer, continuing the same downward
  * page countdown into data that lives *before* the sprite's own page 0 --
  * which draw_sprite_fine's y&15-only math can't express, hence this being
@@ -553,103 +596,49 @@ static void draw_sprite_at_shift(const atari7800_sprite_asset_t *asset, uint8_t 
   (void)atari7800_scene_draw_sprite(&scene, &shifted_asset, x, y);
 }
 
-/* Draws a sprite with pixel-fine vertical positioning inside its zone.
- * Shift range matches the full 16-line zone height (y&15, not y&7) -- see
- * star_sprite_data's comment above for why. */
+/* Draws a sprite with pixel-fine vertical positioning inside its zone, for
+ * an object that never needs to cross a zone boundary -- only the ship
+ * (always drawn at the fixed, zone-aligned (72,80)) uses this directly;
+ * everything that actually moves uses draw_sprite_zone_aware below. */
 static void draw_sprite_fine(const atari7800_sprite_asset_t *asset, uint8_t x, uint8_t y) {
   draw_sprite_at_shift(asset, x, y, (int8_t)(y & 15u));
 }
 
-/* A single MARIA Direct Mode object's render window is exactly one
- * 16-line zone -- whichever zone it's placed in (y>>4), only that zone's
- * own 16 scanlines are ever scanned from it, regardless of shift. BUT this
- * is not a hardware wall: astrowing.bas's own plotsprite4.asm (the
- * reference this port is based on, and proven to have zero trouble with
- * sprites crossing zone boundaries) handles a sprite whose Y isn't
- * zone-aligned by emitting a *second* Direct Mode object in the next
- * zone, whose graphic-address high byte is exactly one zone-height (16
- * pages) less than the first object's -- continuing the same downward
- * per-scanline page countdown across the boundary rather than truncating
- * it. Confirmed against the emulator's own MARIA model
+/* A real port of astrowing.bas's own plotsprite4.asm, used uniformly for
+ * every dynamically-positioned sprite (star, bullet, enemy, explosion
+ * frames): a single MARIA Direct Mode object's render window is exactly
+ * one 16-line zone, so whenever the object isn't exactly zone-aligned
+ * (in_zone != 0), plotsprite4 *always* emits a second Direct Mode object
+ * in the next zone, whose graphic-address high byte is exactly one
+ * zone-height (16 pages) less than the first's -- continuing the same
+ * downward per-scanline page countdown across the boundary rather than
+ * truncating it. This is plotsprite4's own unconditional `cmp #1` check,
+ * not a "only split if truly needed" threshold -- an earlier version of
+ * this function used in_zone > 8 (7800port.md #28/#29), which was this
+ * port's own invention, not the reference's actual logic.
+ *
+ * Confirmed against the emulator's own MARIA model
  * (third_party/a7800/src/mame/video/maria.cpp's draw_scanline/startdma):
  * each zone reloads its object's page countdown fresh from that zone's
  * own DLL entry, decrementing once per scanline, so a second object
  * placed one zone down with a base address 16 pages lower picks up
- * exactly where the first left off. See draw_enemy (bank 1, below) for
- * the real two-object implementation, and enemy_sprite_tall_data's own
- * comment for the padded layout this needs. An earlier attempt at this
- * (7800port.md #28) wrongly concluded a two-object split was infeasible
- * with a *shared* data array (the 31-page envelope other sprites use is
- * too small relative to its own 16-page read window to add continuation
- * content without ghosting into the first object's unused rows) and
- * settled for clamping the drawn Y instead of giving the enemy its own,
- * differently-padded array -- reverted; see 7800port.md #29.
- *
- * Same constraint, but a 16-line-tall sprite (fighter_explode_frames)
- * only ever fits its zone at shift 0 exactly -- any other position always
- * needs a split, so there's no partial safe range to round into like the
- * 8-line case above. Always zone-align. Acceptable for an already-brief,
- * visually chaotic 18-frame explosion in a way it wouldn't be for the
- * continuously-visible, smoothly-moving live enemy sprite. */
-static uint8_t zone_safe_y_16(uint8_t y) {
-  return (uint8_t)(y & 0xf0u);
-}
-
-/* fighter_explode_frames/fighter_explode_data (assets/fighter_explode.h,
- * 8KiB) don't fit in the fixed region alongside everything else needed
- * every frame -- moved to switchable bank 1, since explosions are brief
- * and relatively infrequent (up to 4 at once, ~18 frames each), unlike
- * the ship/stars/live enemies that need zero-overhead fixed-region access
- * every single frame. banked_call_8000 (mapper.h) only takes a void(void)
- * function pointer, so the frame index and position are passed via these
- * globals instead of real arguments. */
-static uint8_t explode_draw_frame;
-static uint8_t explode_draw_x;
-static uint8_t explode_draw_y;
-
-__attribute__((section(".cart_rom_bank_1.text")))
-static void draw_explosion_bank1(void) {
-  draw_sprite_fine(&fighter_explode_frames[explode_draw_frame], explode_draw_x, explode_draw_y);
+ * exactly where the first left off -- verified directly against actual
+ * MARIA zone RAM for a live crossing case, not just derived by hand
+ * (7800port.md #29/#30). shared_sprite_data's own comment covers the
+ * leading-padding this needs. */
+static void draw_sprite_zone_aware(const atari7800_sprite_asset_t *asset, uint8_t x, uint8_t y) {
+  uint8_t in_zone = (uint8_t)(y & 15u);
+  draw_sprite_at_shift(asset, x, y, (int8_t)in_zone);
+  if (in_zone != 0u) {
+    draw_sprite_at_shift(asset, x, (uint8_t)(y + 16u), (int8_t)(in_zone - 16));
+  }
 }
 
 /* Regular enemy sprite (astrowing.bas's own fighter.png, recolored via
  * the "Enemy" palette, index 3, matching P3C1-3) -- 8x8, 2 bytes/row.
- * Moving under real AI exercises the full y&15 shift range, including
- * shifts that cross a zone boundary (in_zone > 8), which needs a *second*
- * Direct Mode object one zone down whose base address is 16 pages (one
- * zone height) lower than the first -- see draw_sprite_at_shift's and
- * draw_enemy's own comments, and 7800port.md #29 for the derivation.
- *
- * That second object's own page countdown, at its own zone-local shift
- * (in_zone - 16, negative), reads pages *before* this array's own page 0
- * -- so unlike star/bullet's shared 31-page envelope (content anchored at
- * the *end* of the span, pages [16-H, 15], trailing padding only), this
- * array needs LEADING padding too: 7 pages before page 0, on top of the
- * usual 31-page envelope (0-30), for 38 pages total. Content stays
- * anchored the same way (page 15-row, rows 0/7 blank and omitted) at
- * pages 8-15 of the *unshifted* numbering -- i.e. array pages 15-22 once
- * the 7-page lead is folded in; .data below points at array page 7 (this
- * sprite's own "unshifted page 0") so a plain (int8_t) shift of -7..+15
- * lands correctly across both objects without further adjustment.
- * Dedicated (not shared with star/bullet in misc_sprite_data): the
- * 31-page shared envelope has no room to add this leading padding without
- * the extra pages becoming reachable -- and visible -- from star/bullet's
- * own unused shift range too. 9728 bytes doesn't fit alongside bank 1's
- * own fighter_explode_data (8KiB) in one 16KiB bank, so this gets its own
- * bank (2, otherwise unused) rather than bank 1. */
-static const uint8_t enemy_sprite_tall_data[38 * 256] __attribute__((aligned(256)))
-    __attribute__((section(".cart_rom_bank_2.rodata"))) = {
-  [16 * 256 + 0] = 0x03, [16 * 256 + 1] = 0xc0, /* row 6 */
-  [17 * 256 + 0] = 0x3f, [17 * 256 + 1] = 0xfc, /* row 5 */
-  [18 * 256 + 0] = 0x3f, [18 * 256 + 1] = 0xfc, /* row 4 */
-  [19 * 256 + 0] = 0x0f, [19 * 256 + 1] = 0xf0, /* row 3 */
-  [20 * 256 + 0] = 0x0a, [20 * 256 + 1] = 0x50, /* row 2 */
-  [21 * 256 + 0] = 0x02, [21 * 256 + 1] = 0x40, /* row 1 */
-};
-
-__attribute__((section(".cart_rom_bank_2.rodata")))
-static const atari7800_sprite_asset_t enemy_sprite_tall = {
-  .data = &enemy_sprite_tall_data[7 * 256],
+ * Byte-columns 2-3 of shared_sprite_data, bank 1 (see its own comment). */
+static const atari7800_sprite_asset_t enemy_sprite = {
+  .data = &shared_sprite_data[7 * 256 + 2],
   .width_bytes = 2u,
   .height_lines = 8u,
   .mode = 0x40u,
@@ -658,24 +647,28 @@ static const atari7800_sprite_asset_t enemy_sprite_tall = {
   .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED
 };
 
-static uint8_t enemy_draw_x;
-static uint8_t enemy_draw_y;
-
-/* Draws the live enemy sprite, splitting into a second Direct Mode object
- * in the next zone whenever it doesn't fit the rest of the current one --
- * astrowing.bas's own plotsprite4.asm technique (7800port.md #29),
- * replacing the Y-clamp workaround from #28. in_zone > 8 is the same
- * "more than half the sprite's 8 lines would be cut off" threshold #28's
- * zone_safe_y_8 used, but here it triggers a real second object instead
- * of snapping position. */
-__attribute__((section(".cart_rom_bank_2.text")))
-static void draw_enemy(void) {
-  uint8_t in_zone = (uint8_t)(enemy_draw_y & 15u);
-  draw_sprite_at_shift(&enemy_sprite_tall, enemy_draw_x, enemy_draw_y, (int8_t)in_zone);
-  if (in_zone > 8u) {
-    draw_sprite_at_shift(&enemy_sprite_tall, enemy_draw_x, (uint8_t)(enemy_draw_y + 16u), (int8_t)(in_zone - 16));
-  }
-}
+/* Explosion animation, 8 frames (fighter_explode_00..07_conv.png),
+ * byte-columns 4-11 of shared_sprite_data (see its own comment for why
+ * real content only needs the same 8-row envelope as the enemy sprite
+ * despite the source PNGs' 16-row canvas). */
+static const atari7800_sprite_asset_t fighter_explode_frames[8] = {
+  { .data = &shared_sprite_data[7 * 256 + 4], .width_bytes = 1u, .height_lines = 8u,
+    .mode = 0x40u, .palette = 3u, .width_twos_comp = 0x1fu, .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED },
+  { .data = &shared_sprite_data[7 * 256 + 5], .width_bytes = 1u, .height_lines = 8u,
+    .mode = 0x40u, .palette = 3u, .width_twos_comp = 0x1fu, .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED },
+  { .data = &shared_sprite_data[7 * 256 + 6], .width_bytes = 1u, .height_lines = 8u,
+    .mode = 0x40u, .palette = 3u, .width_twos_comp = 0x1fu, .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED },
+  { .data = &shared_sprite_data[7 * 256 + 7], .width_bytes = 1u, .height_lines = 8u,
+    .mode = 0x40u, .palette = 3u, .width_twos_comp = 0x1fu, .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED },
+  { .data = &shared_sprite_data[7 * 256 + 8], .width_bytes = 1u, .height_lines = 8u,
+    .mode = 0x40u, .palette = 3u, .width_twos_comp = 0x1fu, .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED },
+  { .data = &shared_sprite_data[7 * 256 + 9], .width_bytes = 1u, .height_lines = 8u,
+    .mode = 0x40u, .palette = 3u, .width_twos_comp = 0x1fu, .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED },
+  { .data = &shared_sprite_data[7 * 256 + 10], .width_bytes = 1u, .height_lines = 8u,
+    .mode = 0x40u, .palette = 3u, .width_twos_comp = 0x1fu, .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED },
+  { .data = &shared_sprite_data[7 * 256 + 11], .width_bytes = 1u, .height_lines = 8u,
+    .mode = 0x40u, .palette = 3u, .width_twos_comp = 0x1fu, .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED },
+};
 
 /* ---- Title screen (astrowing.bas:326-397's title_loop, ported) ----
  * Runs to completion before gameplay's own atari7800_scene_init_160a call
@@ -893,7 +886,7 @@ int main(void) {
     update_scrolling();
     shift_stars();
     cycle_stars();
-    update_enemy();
+    banked_call_8000(1, update_enemy);
 
     /* astrowing.bas:560-562: `if bcooldown > 0 then bcooldown = bcooldown
      * - 1` then `if joy0fire1 && bcooldown = 0 then gosub fire_bullet`. */
@@ -932,7 +925,7 @@ int main(void) {
      * zone clean. */
     for (i = 0; i < 4; ++i) {
       if (star_y[i] >= 16) {
-        draw_sprite_fine(&star_sprite, star_x[i], star_y[i]);
+        draw_sprite_zone_aware(&star_sprite, star_x[i], star_y[i]);
       }
     }
 
@@ -955,7 +948,7 @@ int main(void) {
      * sprites, not hypothetical. */
     for (i = 0; i < 4; ++i) {
       if (blife[i] != 0 && bul_y[i] >= 16) {
-        draw_sprite_fine(&bullet_sprite, bul_x[i], bul_y[i]);
+        draw_sprite_zone_aware(&bullet_sprite, bul_x[i], bul_y[i]);
       }
     }
 
@@ -972,31 +965,22 @@ int main(void) {
       }
 
       if (enemy_life[i] == 1u) {
-        /* enemy_sprite_tall/draw_enemy live in switchable bank 1 (see
-         * their own comments) -- reach via banked_call_8000, passing
-         * position through globals, same pattern as the explosion draw
-         * below. The enemy_y <= 191 filter above keeps y+16 (the second
-         * object's zone, when the sprite crosses a boundary) within the
-         * scene's 14 visible zones (224 lines) -- never clamped into the
-         * first object's own zone. */
-        enemy_draw_x = (uint8_t)enemy_x[i];
-        enemy_draw_y = (uint8_t)enemy_y[i];
-        banked_call_8000(2, draw_enemy);
+        /* The enemy_y <= 191 filter above keeps y+16 (the second object's
+         * zone, when the sprite crosses a boundary) within the scene's 14
+         * visible zones (224 lines) -- never clamped into the first
+         * object's own zone. */
+        draw_sprite_zone_aware(&enemy_sprite, (uint8_t)enemy_x[i], (uint8_t)enemy_y[i]);
       } else {
         /* astrowing.bas:2484-2489: frame = (18 - elife) / 2. Clamped to 7
          * (the last real frame): the reference's own arithmetic reaches 8
          * one frame before death (elife=2), one past fighter_explode's 8
          * frames (0-7) -- clamp rather than reproduce that as an
-         * out-of-bounds asset read. */
+         * out-of-bounds asset read. Drawn at the enemy's own actual
+         * position, same as the live sprite it replaces -- no separate
+         * zone-alignment clamp (7800port.md #30 dropped that). */
         uint8_t frame_index = (uint8_t)((18u - enemy_life[i]) / 2u);
         if (frame_index > 7u) frame_index = 7u;
-        /* fighter_explode_frames lives in switchable bank 1 (see
-         * draw_explosion_bank1's own comment) -- reach it via
-         * banked_call_8000, passing arguments through globals. */
-        explode_draw_frame = frame_index;
-        explode_draw_x = (uint8_t)enemy_x[i];
-        explode_draw_y = zone_safe_y_16((uint8_t)enemy_y[i]);
-        banked_call_8000(1, draw_explosion_bank1);
+        draw_sprite_zone_aware(&fighter_explode_frames[frame_index], (uint8_t)enemy_x[i], (uint8_t)enemy_y[i]);
       }
     }
 
