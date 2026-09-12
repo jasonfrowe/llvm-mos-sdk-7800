@@ -56,18 +56,25 @@ static const int16_t cos_table[16] = {
  * reachable up to shift=15 i.e. window [15,30]) -- pages 16-30 are explicit
  * trailing padding, not reachable ROM garbage.
  *
- * Shares its 31-page block with bullet_sprite and enemy_sprite (below)
- * rather than each getting an independent 7936-byte array: all three need
- * the exact same 31-page fine-Y envelope (utils/pack_sprites_to_strided.py
- * generates this identical envelope regardless of a sprite's own height --
- * see its own comment, fixed in 7800port.md #27 -- so a real, moving
- * sprite like the enemy needs it too, not just these two), so extra
- * byte-column "channels" in the same pages cost nothing extra -- same
- * technique as spaceship_data's 16 frames or title_screen_data's chunks
- * sharing one block, just with 3 tiny sprites instead of many animation
- * frames. This one change was needed to fit the level-1 music
- * (song_level1) within 48K's actual usable ROM budget -- see
- * 7800port.md #22. */
+ * Shares its 31-page block with bullet_sprite (below) rather than each
+ * getting an independent 7936-byte array: both need the exact same
+ * 31-page fine-Y envelope (utils/pack_sprites_to_strided.py generates
+ * this identical envelope regardless of a sprite's own height -- see its
+ * own comment, fixed in 7800port.md #27), so an extra byte-column
+ * "channel" in the same pages costs nothing extra -- same technique as
+ * spaceship_data's 16 frames or title_screen_data's chunks sharing one
+ * block, just with 2 tiny sprites instead of many animation frames. This
+ * one change was needed to fit the level-1 music (song_level1) within
+ * 48K's actual usable ROM budget -- see 7800port.md #22.
+ *
+ * enemy_sprite used to share a third byte-column here (7800port.md #27),
+ * but moving under real AI exercises the *whole* y&15 shift range,
+ * including positions that cross a zone boundary -- correctly rendering
+ * those needs a second Direct Mode object reading data from *before* this
+ * array's own page 0 (see draw_sprite_at_shift's comment), which isn't
+ * expressible while sharing this block's fixed page range with star/
+ * bullet. Given its own dedicated, differently-padded array instead:
+ * enemy_sprite_tall_data, bank 1, below. */
 static const uint8_t misc_sprite_data[31 * 256] __attribute__((aligned(256)))
     __attribute__((section(".cart_rom_fixed_hi_extra.rodata"))) = {
   [15 * 256 + 0] = 0x40, /* star, page 15: pixel */
@@ -75,18 +82,6 @@ static const uint8_t misc_sprite_data[31 * 256] __attribute__((aligned(256)))
   [13 * 256 + 1] = 0x14, /* bullet, page 13: row 2 */
   [14 * 256 + 1] = 0x14, /* bullet, page 14: row 1 */
   [15 * 256 + 1] = 0x14, /* bullet, page 15: row 0 (top) */
-  /* enemy_sprite, byte-columns 2-3 (2 bytes/row, 8x8 pixels): transcribed
-   * directly from utils/pack_sprites_to_strided.py's own output against
-   * fighter.png (examples/atari7800/assets/fighter.sprite.h's original
-   * source), pages 8-15 = rows 7-0 (page 15 - row, per that tool's fixed
-   * anchor). Rows 0 and 7 are blank (0x00 0x00, omitted -- sparse
-   * initializer defaults to 0). */
-  [9  * 256 + 2] = 0x03, [9  * 256 + 3] = 0xc0, /* row 6 */
-  [10 * 256 + 2] = 0x3f, [10 * 256 + 3] = 0xfc, /* row 5 */
-  [11 * 256 + 2] = 0x3f, [11 * 256 + 3] = 0xfc, /* row 4 */
-  [12 * 256 + 2] = 0x0f, [12 * 256 + 3] = 0xf0, /* row 3 */
-  [13 * 256 + 2] = 0x0a, [13 * 256 + 3] = 0x50, /* row 2 */
-  [14 * 256 + 2] = 0x02, [14 * 256 + 3] = 0x40, /* row 1 */
 };
 
 static const atari7800_sprite_asset_t star_sprite = {
@@ -110,22 +105,6 @@ static const atari7800_sprite_asset_t bullet_sprite = {
   .mode = 0x40u,
   .palette = 1u,
   .width_twos_comp = 0x1fu,
-  .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED
-};
-
-/* Regular enemy sprite (astrowing.bas's own fighter.png, recolored via
- * the "Enemy" palette, index 3, matching P3C1-3) -- 8x8, 2 bytes/row.
- * Needs the same fine-Y shiftability as the ship (draw_sprite_fine) now
- * that it actually moves under real AI, unlike the placeholder single
- * drifting enemy this replaced (7800port.md #26), which stayed zone-
- * aligned specifically to avoid needing this. */
-static const atari7800_sprite_asset_t enemy_sprite = {
-  .data = &misc_sprite_data[2],
-  .width_bytes = 2u,
-  .height_lines = 8u,
-  .mode = 0x40u,
-  .palette = 3u,
-  .width_twos_comp = 0x1eu,
   .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED
 };
 
@@ -555,49 +534,58 @@ static void shift_stars(void) {
   }
 }
 
-/* Draws a sprite with pixel-fine vertical positioning inside its zone.
- * Shift range matches the full 16-line zone height (y&15, not y&7) -- see
- * star_sprite_data's comment above for why. */
-static void draw_sprite_fine(const atari7800_sprite_asset_t *asset, uint8_t x, uint8_t y) {
-  uint8_t y_offset = y & 15;
+/* Shifts asset.data by an explicit signed page count (not derived from Y)
+ * and draws at (x,y). draw_sprite_fine (below) is the common case, where
+ * the shift is simply y&15; the enemy zone-crossing split (draw_enemy,
+ * bank 1) needs a second object whose shift is (y&15)-16 -- a *negative*
+ * page offset from the same base pointer, continuing the same downward
+ * page countdown into data that lives *before* the sprite's own page 0 --
+ * which draw_sprite_fine's y&15-only math can't express, hence this being
+ * split out. Casting the negative int16_t product to uintptr_t and adding
+ * relies on standard unsigned wraparound (well-defined in C, unlike
+ * signed left-shift of a negative value): -N*256 as an unsigned 16-bit
+ * value equals 65536-N*256, which added to the pointer is equivalent to
+ * subtracting N*256, exactly as intended. */
+static void draw_sprite_at_shift(const atari7800_sprite_asset_t *asset, uint8_t x, uint8_t y, int8_t page_shift) {
   atari7800_sprite_asset_t shifted_asset = *asset;
-  shifted_asset.data = (const uint8_t *)((uintptr_t)shifted_asset.data + ((uint16_t)y_offset << 8));
+  shifted_asset.data = (const uint8_t *)((uintptr_t)shifted_asset.data + (uintptr_t)((int16_t)page_shift * 256));
 
   (void)atari7800_scene_draw_sprite(&scene, &shifted_asset, x, y);
 }
 
-/* A single MARIA Direct Mode object's render window is exactly one
- * 16-line zone -- whichever zone it's placed in (y>>4), only that zone's
- * own 16 scanlines are ever scanned from it, regardless of shift. An
- * object taller than what's left between its start row and the zone's
- * bottom edge gets silently truncated at the boundary, not wrapped or
- * split across a second zone -- confirmed hands-on (7800port.md #28) as
- * real corruption/vanishing on the enemy sprite once it started moving
- * under real AI, not a hypothetical. astrowing.bas's own EnableObject/
- * SetObjectY macros hit the identical constraint, which is why they only
- * support two discrete positions (top-half/bottom-half) within a zone for
- * an object that doesn't fill it, not arbitrary fine-Y.
- *
- * A true two-object split (rendering the overflow as a second object
- * placed in the next zone) turns out to need a genuinely separate,
- * non-shared data array per sprite: the shared 31-page envelope's own
- * 16-page read window is too large relative to its 31-page total span to
- * add continuation content without that content also becoming reachable
- * -- and visible -- from the *first* object's own unused rows, a
- * different corruption in the same family. Deferred as real, separate
- * engineering (would need its own dedicated array, not sharing
- * misc_sprite_data's page space); instead, clamp the drawn Y so a sprite
- * never straddles a zone line, snapping to whichever safe position is
- * closer. Trades a small (<=4px) positional snap as an enemy crosses a
- * zone boundary for never showing a truncated sprite. */
-static uint8_t zone_safe_y_8(uint8_t y) {
-  uint8_t in_zone = (uint8_t)(y & 15u);
-  if (in_zone <= 8u) return y;
-  if (in_zone <= 12u) return (uint8_t)((y & 0xf0u) | 8u);
-  return (uint8_t)((y & 0xf0u) + 16u);
+/* Draws a sprite with pixel-fine vertical positioning inside its zone.
+ * Shift range matches the full 16-line zone height (y&15, not y&7) -- see
+ * star_sprite_data's comment above for why. */
+static void draw_sprite_fine(const atari7800_sprite_asset_t *asset, uint8_t x, uint8_t y) {
+  draw_sprite_at_shift(asset, x, y, (int8_t)(y & 15u));
 }
 
-/* Same constraint, but a 16-line-tall sprite (fighter_explode_frames)
+/* A single MARIA Direct Mode object's render window is exactly one
+ * 16-line zone -- whichever zone it's placed in (y>>4), only that zone's
+ * own 16 scanlines are ever scanned from it, regardless of shift. BUT this
+ * is not a hardware wall: astrowing.bas's own plotsprite4.asm (the
+ * reference this port is based on, and proven to have zero trouble with
+ * sprites crossing zone boundaries) handles a sprite whose Y isn't
+ * zone-aligned by emitting a *second* Direct Mode object in the next
+ * zone, whose graphic-address high byte is exactly one zone-height (16
+ * pages) less than the first object's -- continuing the same downward
+ * per-scanline page countdown across the boundary rather than truncating
+ * it. Confirmed against the emulator's own MARIA model
+ * (third_party/a7800/src/mame/video/maria.cpp's draw_scanline/startdma):
+ * each zone reloads its object's page countdown fresh from that zone's
+ * own DLL entry, decrementing once per scanline, so a second object
+ * placed one zone down with a base address 16 pages lower picks up
+ * exactly where the first left off. See draw_enemy (bank 1, below) for
+ * the real two-object implementation, and enemy_sprite_tall_data's own
+ * comment for the padded layout this needs. An earlier attempt at this
+ * (7800port.md #28) wrongly concluded a two-object split was infeasible
+ * with a *shared* data array (the 31-page envelope other sprites use is
+ * too small relative to its own 16-page read window to add continuation
+ * content without ghosting into the first object's unused rows) and
+ * settled for clamping the drawn Y instead of giving the enemy its own,
+ * differently-padded array -- reverted; see 7800port.md #29.
+ *
+ * Same constraint, but a 16-line-tall sprite (fighter_explode_frames)
  * only ever fits its zone at shift 0 exactly -- any other position always
  * needs a split, so there's no partial safe range to round into like the
  * 8-line case above. Always zone-align. Acceptable for an already-brief,
@@ -622,6 +610,71 @@ static uint8_t explode_draw_y;
 __attribute__((section(".cart_rom_bank_1.text")))
 static void draw_explosion_bank1(void) {
   draw_sprite_fine(&fighter_explode_frames[explode_draw_frame], explode_draw_x, explode_draw_y);
+}
+
+/* Regular enemy sprite (astrowing.bas's own fighter.png, recolored via
+ * the "Enemy" palette, index 3, matching P3C1-3) -- 8x8, 2 bytes/row.
+ * Moving under real AI exercises the full y&15 shift range, including
+ * shifts that cross a zone boundary (in_zone > 8), which needs a *second*
+ * Direct Mode object one zone down whose base address is 16 pages (one
+ * zone height) lower than the first -- see draw_sprite_at_shift's and
+ * draw_enemy's own comments, and 7800port.md #29 for the derivation.
+ *
+ * That second object's own page countdown, at its own zone-local shift
+ * (in_zone - 16, negative), reads pages *before* this array's own page 0
+ * -- so unlike star/bullet's shared 31-page envelope (content anchored at
+ * the *end* of the span, pages [16-H, 15], trailing padding only), this
+ * array needs LEADING padding too: 7 pages before page 0, on top of the
+ * usual 31-page envelope (0-30), for 38 pages total. Content stays
+ * anchored the same way (page 15-row, rows 0/7 blank and omitted) at
+ * pages 8-15 of the *unshifted* numbering -- i.e. array pages 15-22 once
+ * the 7-page lead is folded in; .data below points at array page 7 (this
+ * sprite's own "unshifted page 0") so a plain (int8_t) shift of -7..+15
+ * lands correctly across both objects without further adjustment.
+ * Dedicated (not shared with star/bullet in misc_sprite_data): the
+ * 31-page shared envelope has no room to add this leading padding without
+ * the extra pages becoming reachable -- and visible -- from star/bullet's
+ * own unused shift range too. 9728 bytes doesn't fit alongside bank 1's
+ * own fighter_explode_data (8KiB) in one 16KiB bank, so this gets its own
+ * bank (2, otherwise unused) rather than bank 1. */
+static const uint8_t enemy_sprite_tall_data[38 * 256] __attribute__((aligned(256)))
+    __attribute__((section(".cart_rom_bank_2.rodata"))) = {
+  [16 * 256 + 0] = 0x03, [16 * 256 + 1] = 0xc0, /* row 6 */
+  [17 * 256 + 0] = 0x3f, [17 * 256 + 1] = 0xfc, /* row 5 */
+  [18 * 256 + 0] = 0x3f, [18 * 256 + 1] = 0xfc, /* row 4 */
+  [19 * 256 + 0] = 0x0f, [19 * 256 + 1] = 0xf0, /* row 3 */
+  [20 * 256 + 0] = 0x0a, [20 * 256 + 1] = 0x50, /* row 2 */
+  [21 * 256 + 0] = 0x02, [21 * 256 + 1] = 0x40, /* row 1 */
+};
+
+__attribute__((section(".cart_rom_bank_2.rodata")))
+static const atari7800_sprite_asset_t enemy_sprite_tall = {
+  .data = &enemy_sprite_tall_data[7 * 256],
+  .width_bytes = 2u,
+  .height_lines = 8u,
+  .mode = 0x40u,
+  .palette = 3u,
+  .width_twos_comp = 0x1eu,
+  .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED
+};
+
+static uint8_t enemy_draw_x;
+static uint8_t enemy_draw_y;
+
+/* Draws the live enemy sprite, splitting into a second Direct Mode object
+ * in the next zone whenever it doesn't fit the rest of the current one --
+ * astrowing.bas's own plotsprite4.asm technique (7800port.md #29),
+ * replacing the Y-clamp workaround from #28. in_zone > 8 is the same
+ * "more than half the sprite's 8 lines would be cut off" threshold #28's
+ * zone_safe_y_8 used, but here it triggers a real second object instead
+ * of snapping position. */
+__attribute__((section(".cart_rom_bank_2.text")))
+static void draw_enemy(void) {
+  uint8_t in_zone = (uint8_t)(enemy_draw_y & 15u);
+  draw_sprite_at_shift(&enemy_sprite_tall, enemy_draw_x, enemy_draw_y, (int8_t)in_zone);
+  if (in_zone > 8u) {
+    draw_sprite_at_shift(&enemy_sprite_tall, enemy_draw_x, (uint8_t)(enemy_draw_y + 16u), (int8_t)(in_zone - 16));
+  }
 }
 
 /* ---- Title screen (astrowing.bas:326-397's title_loop, ported) ----
@@ -913,16 +966,22 @@ int main(void) {
      * outside the visible area, since enemy_x/y are int16_t and can go
      * negative or past 255 (spawn positions do, by design). */
     for (i = 0; i < 4; ++i) {
-      uint8_t draw_y;
-
       if (enemy_life[i] == 0) continue;
       if (enemy_x[i] < 0 || enemy_x[i] > 159 || enemy_y[i] < 16 || enemy_y[i] > 191) {
         continue;
       }
 
       if (enemy_life[i] == 1u) {
-        draw_y = zone_safe_y_8((uint8_t)enemy_y[i]);
-        draw_sprite_fine(&enemy_sprite, (uint8_t)enemy_x[i], draw_y);
+        /* enemy_sprite_tall/draw_enemy live in switchable bank 1 (see
+         * their own comments) -- reach via banked_call_8000, passing
+         * position through globals, same pattern as the explosion draw
+         * below. The enemy_y <= 191 filter above keeps y+16 (the second
+         * object's zone, when the sprite crosses a boundary) within the
+         * scene's 14 visible zones (224 lines) -- never clamped into the
+         * first object's own zone. */
+        enemy_draw_x = (uint8_t)enemy_x[i];
+        enemy_draw_y = (uint8_t)enemy_y[i];
+        banked_call_8000(2, draw_enemy);
       } else {
         /* astrowing.bas:2484-2489: frame = (18 - elife) / 2. Clamped to 7
          * (the last real frame): the reference's own arithmetic reaches 8
