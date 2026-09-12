@@ -14,11 +14,21 @@
 /* Include packed spaceship frames */
 #include "assets/spaceship.h"
 
+/* Enemy sprite + its explosion animation. Local to this program (not
+ * shared/fighter.sprite.h, which asset-bridge-demo.c also uses): the
+ * shared header's fighter_sprite_data has no fine-Y padding (fine for a
+ * demo that only ever draws it zone-aligned), but the real enemy AI
+ * (below) needs pixel-fine Y positioning via draw_sprite_fine, so this
+ * is regenerated from the same source PNG (fighter.png) with the full
+ * fine-Y-shiftable envelope instead -- same tool, same technique as
+ * spaceship.h/fighter_explode.h. */
+#include "assets/enemy.h"
+#include "assets/fighter_explode.h"
+
 /* Include HUD font. This example lives under examples/atari7800-supergame/
  * (a different platform's example tree from these shared assets, which
  * stay under examples/atari7800/assets/ since they're also used by
  * title-demo.c, still built against the flat atari7800 platform). */
-#include "../../atari7800/assets/fighter.sprite.h"
 #include "../../atari7800/assets/hud_font.h"
 
 /* Title screen banner + music, shared with title-demo.c (see 7800port.md
@@ -119,17 +129,55 @@ static uint8_t rot_timer = 0;
 static int8_t scroll_x = 0;
 static int8_t scroll_y = 0;
 
-/* Enemy state (single enemy for now; the reference 7800basic source pools
- * up to 4 with randomized spawns, deferred until this pass proves out).
- * Reuses fighter_sprite (see fighter.sprite.h) exactly as the original
- * game's regular enemies do: the player's own (non-rotating) ship shape,
- * recolored via the "Enemy" palette (index 3, matching P3C1-3 in
- * astrowing.bas) rather than needing new sprite art. Y is fixed:
- * fighter_sprite_data has no fine-Y padding (unlike star_sprite_data), so
- * only zone-aligned Y positions are safe without extending that asset. */
-static uint8_t enemy_x = 130;
-static const uint8_t enemy_y = 32;
-static int8_t enemy_dx = -1;
+/* Enemy pool (astrowing.bas:886-1118's update_enemy, ported in full --
+ * see 7800port.md #26). Pool of 4, struct-of-arrays like everything else
+ * in this file. enemy_life: 0=dead/empty, 1=alive, 2-18=exploding (counts
+ * down to 0 on death). Reuses the player's own ship shape recolored via
+ * the "Enemy" palette (index 3, matching P3C1-3 in astrowing.bas) --
+ * see assets/enemy.h for why this is a local regeneration of
+ * fighter.sprite.h's asset rather than the shared header itself.
+ *
+ * Position is screen-relative, not the reference's true world coordinates
+ * with an 8-bit low byte + hi-byte "segment" (4 segments = 1024px) and
+ * explicit wraparound arithmetic: that scheme exists in the reference
+ * because its camera follows a player that itself moves through world
+ * space. This port's ship is always drawn at a fixed screen position (72,
+ * 80, see draw_sprite_fine(&ship, 72, 80) below), so "player world
+ * position" always collapses to that one point -- the AI's target-corner
+ * math (in update_enemy) uses it directly instead of comparing hi-bytes.
+ * Enemies get the same per-frame world-scroll compensation stars already
+ * receive in shift_stars (subtracting scroll_x/scroll_y) rather than
+ * reproducing the reference's wraparound scheme, which has no equivalent
+ * need here. int16_t (not uint8_t, like stars/bullets use): spawn
+ * positions go negative or past 255 (player_x ± 90, i.e. -18 or 162). */
+static int16_t enemy_x[4];
+static int16_t enemy_y[4];
+static int8_t enemy_vx[4];
+static int8_t enemy_vy[4];
+static uint8_t enemy_life[4];
+
+/* astrowing.bas leans on 7800basic's built-in `rand` for enemy spawn
+ * side/Y; this platform has no equivalent yet, so a minimal one is added
+ * here. 8-bit Galois LFSR, feedback mask 0xb8 (taps at bits 8/6/5/4) --
+ * a standard maximal-length choice at this width. */
+static uint8_t rand_state = 1u;
+
+static uint8_t next_rand(void) {
+  uint8_t lsb = rand_state & 1u;
+  rand_state >>= 1;
+  if (lsb) rand_state ^= 0xb8u;
+  return rand_state;
+}
+
+/* astrowing.bas's score0 (BCD, HUD-displayed) and player_shield (starts
+ * at 100, astrowing.bas:509 area) -- tracked internally starting this
+ * pass since player-vs-enemy collision needs somewhere real to record a
+ * hit. Neither is wired into the HUD display yet (still today's static
+ * "SHLD:100 L:3" text) -- a natural follow-up, not this pass. Shield
+ * reaching 0 has no consequence yet either: that's the deferred level/
+ * death-flow system (astrowing.bas's own "goto coll_done" branch). */
+static uint16_t score = 0;
+static uint8_t player_shield = 100;
 
 /* Player bullets (astrowing.bas:78/818-880's bul_x/bul_y/bul_vx/bul_vy/
  * blife arrays, a pool of 4 -- "Screen Space" bullets per the reference's
@@ -210,15 +258,81 @@ static void cycle_stars(void) {
   }
 }
 
-/* Throttled drift, bouncing off the screen edges. Matches the frame-mask
- * throttle technique astrowing.bas uses for enemy movement speed
- * (`temp_v = frame & enemy_move_mask`), simplified to one enemy. */
+/* astrowing.bas:886-1118's update_enemy: spawn, "squad formation, rotating
+ * corner" inertia AI, and explosion countdown -- see enemy_x's own comment
+ * above for the world-space-to-screen-relative adaptation. AI/velocity
+ * updates every other frame (astrowing.bas:894-895's `frame &
+ * enemy_move_mask`, default 1 at astrowing.bas:285 -- no difficulty system
+ * exists yet, so this is the only rate used); enemy firing (astrowing.bas:
+ * 1030-1039) is deferred with the rest of the enemy-bullet system. */
 static void update_enemy(void) {
-  if ((frame_count & 3u) != 0) return;
+  uint8_t i;
 
-  enemy_x = (uint8_t)(enemy_x + enemy_dx);
-  if (enemy_x <= 16u || enemy_x >= 144u) {
-    enemy_dx = (int8_t)-enemy_dx;
+  for (i = 0; i < 4; ++i) {
+    if (enemy_life[i] == 0) {
+      /* astrowing.bas:1046-1049: ~4.7% spawn chance/frame per dead slot. */
+      if ((uint8_t)(frame_count & 127u) <= 5u) {
+        uint8_t side = next_rand();
+        uint8_t y_roll = next_rand();
+        if (y_roll < 10u) y_roll = 10u;
+        if (y_roll > 180u) y_roll = 180u;
+
+        enemy_life[i] = 1;
+        enemy_vx[i] = 0;
+        enemy_vy[i] = 0;
+        /* astrowing.bas:1066-1082: player_x +/- 90 (50/50 side). */
+        enemy_x[i] = (side < 128u) ? (int16_t)(72 - 90) : (int16_t)(72 + 90);
+        /* astrowing.bas:1083-1114: rand[10,180] as an offset from the
+         * player's own screen-center (90). */
+        enemy_y[i] = (int16_t)(80 + (int16_t)y_roll - 90);
+      }
+      continue;
+    }
+
+    if (enemy_life[i] > 1u) {
+      /* astrowing.bas:1041-1044's update_explosion_state. */
+      --enemy_life[i];
+      if (enemy_life[i] == 1u) enemy_life[i] = 0;
+      continue;
+    }
+
+    /* Alive (enemy_life[i] == 1): AI update. */
+    if ((frame_count & 1u) == 0u) {
+      /* astrowing.bas:899-907: rotating target corner, offset by slot
+       * index so the 4 enemies don't all turn in lockstep, Gray-coded
+       * (0,1,3,2 = TL,TR,BR,BL). */
+      uint8_t corner_raw = (uint8_t)(((frame_count >> 7) + i) & 3u);
+      uint8_t corner = (uint8_t)(corner_raw ^ (corner_raw >> 1));
+      /* astrowing.bas:909-958: target = player position (fixed screen
+       * (72,80) in this port) +/- offset per corner. */
+      int16_t target_x = (int16_t)(72 + ((corner & 1u) ? 30 : -30));
+      int16_t target_y = (int16_t)(80 + ((corner & 2u) ? 55 : -55));
+
+      /* astrowing.bas:940-993: accelerate every 4th frame, capped +/-3. */
+      if ((frame_count & 3u) == 0u) {
+        if (target_x >= enemy_x[i]) {
+          if (enemy_vx[i] < 3) ++enemy_vx[i];
+        } else {
+          if (enemy_vx[i] > -3) --enemy_vx[i];
+        }
+        if (target_y >= enemy_y[i]) {
+          if (enemy_vy[i] < 3) ++enemy_vy[i];
+        } else {
+          if (enemy_vy[i] > -3) --enemy_vy[i];
+        }
+      }
+
+      /* astrowing.bas:996-1028: apply velocity (only on the same
+       * every-other-frame cadence as the AI above). */
+      enemy_x[i] = (int16_t)(enemy_x[i] + enemy_vx[i]);
+      enemy_y[i] = (int16_t)(enemy_y[i] + enemy_vy[i]);
+    }
+
+    /* World-scroll compensation, every frame regardless of the AI's own
+     * update rate -- this port's own addition (see enemy_x's comment),
+     * matching how shift_stars treats stars. */
+    enemy_x[i] = (int16_t)(enemy_x[i] - scroll_x);
+    enemy_y[i] = (int16_t)(enemy_y[i] - scroll_y);
   }
 }
 
@@ -246,6 +360,65 @@ static void update_bullets(void) {
     }
 
     --blife[i];
+  }
+}
+
+/* astrowing.bas:1319-1807's check_collisions -- this pass only ports the
+ * two pairs needed once real enemies exist (bullet-vs-enemy, player-vs-
+ * enemy); everything else in that subroutine (energy pickups, blue
+ * fighters, asteroids, boss, enemy bullets) belongs to systems not yet
+ * ported, deferred along with them. */
+static void check_collisions(void) {
+  uint8_t bi, ei;
+
+  /* 1. Bullets vs enemies (astrowing.bas:1342-1379). Center-distance
+   * check done independently on X and Y: bullet's own center offset +2,
+   * enemy's +4 (net delta -2), threshold 15 (16 on easy difficulty, which
+   * this port doesn't have yet, so always 15). */
+  for (bi = 0; bi < 4; ++bi) {
+    if (blife[bi] == 0) continue;
+
+    for (ei = 0; ei < 4; ++ei) {
+      int16_t dx, dy;
+
+      if (enemy_life[ei] != 1u) continue;
+
+      dx = (int16_t)((int16_t)bul_x[bi] - enemy_x[ei] - 2);
+      if (dx < 0) dx = (int16_t)-dx;
+      if (dx >= 15) continue;
+
+      dy = (int16_t)((int16_t)bul_y[bi] - enemy_y[ei] - 2);
+      if (dy < 0) dy = (int16_t)-dy;
+      if (dy >= 15) continue;
+
+      /* Hit! */
+      blife[bi] = 0;
+      enemy_life[ei] = 18; /* Start 18-frame explosion. */
+      score = (uint16_t)(score + 100u);
+      break; /* Bullet used up -- astrowing.bas's own "goto skip_bullet_coll". */
+    }
+  }
+
+  /* 2. Player vs enemies (astrowing.bas:1438-1474). The player is always
+   * at its fixed screen position (72, 80) in this port's model. */
+  for (ei = 0; ei < 4; ++ei) {
+    int16_t dx, dy;
+
+    if (enemy_life[ei] != 1u) continue;
+
+    dx = (int16_t)(72 - enemy_x[ei] + 4);
+    if (dx < 0) dx = (int16_t)-dx;
+    if (dx >= 11) continue;
+
+    dy = (int16_t)(80 - enemy_y[ei]);
+    if (dy < 0) dy = (int16_t)-dy;
+    if (dy >= 11) continue;
+
+    /* Hit! Colliding with an enemy destroys it too, same as shooting it. */
+    enemy_life[ei] = 18;
+    score = (uint16_t)(score + 100u);
+    if (player_shield < 2u) player_shield = 0;
+    else player_shield = (uint8_t)(player_shield - 2u);
   }
 }
 
@@ -367,6 +540,23 @@ static void draw_sprite_fine(const atari7800_sprite_asset_t *asset, uint8_t x, u
   shifted_asset.data = (const uint8_t *)((uintptr_t)shifted_asset.data + ((uint16_t)y_offset << 8));
 
   (void)atari7800_scene_draw_sprite(&scene, &shifted_asset, x, y);
+}
+
+/* fighter_explode_frames/fighter_explode_data (assets/fighter_explode.h,
+ * 8KiB) don't fit in the fixed region alongside everything else needed
+ * every frame -- moved to switchable bank 1, since explosions are brief
+ * and relatively infrequent (up to 4 at once, ~18 frames each), unlike
+ * the ship/stars/live enemies that need zero-overhead fixed-region access
+ * every single frame. banked_call_8000 (mapper.h) only takes a void(void)
+ * function pointer, so the frame index and position are passed via these
+ * globals instead of real arguments. */
+static uint8_t explode_draw_frame;
+static uint8_t explode_draw_x;
+static uint8_t explode_draw_y;
+
+__attribute__((section(".cart_rom_bank_1.text")))
+static void draw_explosion_bank1(void) {
+  draw_sprite_fine(&fighter_explode_frames[explode_draw_frame], explode_draw_x, explode_draw_y);
 }
 
 /* ---- Title screen (astrowing.bas:326-397's title_loop, ported) ----
@@ -592,6 +782,7 @@ int main(void) {
     if (bcooldown > 0) --bcooldown;
     if (ATARI7800_JOY0FIRE1() && bcooldown == 0) fire_bullet();
     update_bullets();
+    check_collisions();
 
     /* Level 1 music (astrowing.bas:3508-3510/3576-3578's PlayMusic branch
      * for current_level=1 -- Song_02_Data/Song_02_30hz.bin; this port has
@@ -644,11 +835,37 @@ int main(void) {
       }
     }
 
-    /* Enemy: fighter_sprite has no fine-Y padding (unlike star_sprite_data
-     * / spaceship_data), so it's drawn at a fixed, zone-aligned Y directly
-     * rather than draw_sprite_fine's page-shift trick, which would read
-     * past the asset's declared size for a non-zone-aligned Y. */
-    (void)atari7800_scene_draw_sprite(&scene, &fighter_sprite, enemy_x, enemy_y);
+    /* astrowing.bas's draw_enemies/draw_explosions (referenced 2462+,
+     * 2476-2491): alive enemies draw the ship sprite; exploding ones draw
+     * an 8-frame animation selected by remaining countdown. Skip drawing
+     * (not updating -- they may come back on screen) enemies currently
+     * outside the visible area, since enemy_x/y are int16_t and can go
+     * negative or past 255 (spawn positions do, by design). */
+    for (i = 0; i < 4; ++i) {
+      if (enemy_life[i] == 0) continue;
+      if (enemy_x[i] < 0 || enemy_x[i] > 159 || enemy_y[i] < 16 || enemy_y[i] > 191) {
+        continue;
+      }
+
+      if (enemy_life[i] == 1u) {
+        draw_sprite_fine(&enemy_sprite_frames[0], (uint8_t)enemy_x[i], (uint8_t)enemy_y[i]);
+      } else {
+        /* astrowing.bas:2484-2489: frame = (18 - elife) / 2. Clamped to 7
+         * (the last real frame): the reference's own arithmetic reaches 8
+         * one frame before death (elife=2), one past fighter_explode's 8
+         * frames (0-7) -- clamp rather than reproduce that as an
+         * out-of-bounds asset read. */
+        uint8_t frame_index = (uint8_t)((18u - enemy_life[i]) / 2u);
+        if (frame_index > 7u) frame_index = 7u;
+        /* fighter_explode_frames lives in switchable bank 1 (see
+         * draw_explosion_bank1's own comment) -- reach it via
+         * banked_call_8000, passing arguments through globals. */
+        explode_draw_frame = frame_index;
+        explode_draw_x = (uint8_t)enemy_x[i];
+        explode_draw_y = (uint8_t)enemy_y[i];
+        banked_call_8000(1, draw_explosion_bank1);
+      }
+    }
 
     /* HUD text is pinned static residency (see setup above) -- nothing to
      * draw here every frame. */
