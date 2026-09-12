@@ -160,14 +160,26 @@ def main():
             frame_rows.append(pack_160a(indices))
         converted_frames.append(frame_rows)
 
-    # Construct the strided, vertically-flipped array.
-    # scanline y (0 = top, H-1 = bottom) is stored at page (8 + H - 1 - y)
-    # Inside each page, frame f is stored at offset (f * width_bytes)
-    total_span_bytes = (args.height + 16) * 256
+    # Construct the strided, vertically-flipped array, using the same
+    # fixed 31-page envelope and anchor as astrowing.c's own hand-authored
+    # star_sprite_data (the proven-correct reference for this scheme,
+    # confirmed working across the full draw_sprite_fine shift range):
+    # scanline y (0 = top, H-1 = bottom) is stored at page (15 - y),
+    # regardless of H -- so content always occupies the H pages ending at
+    # page 15 ([16-H, 15]), and draw_sprite_fine's y&15 shift (added on top
+    # of this array's page 0 as the .data base, see below) always lands a
+    # fully in-bounds, correctly-anchored 16-page read window somewhere in
+    # [0, 30]. This total span (31 pages) and page formula are independent
+    # of H: an earlier version of this function scaled both with H (base
+    # page 8, total (H+16)*256), which only produced a correct, in-bounds
+    # window at every shift for the one case where a 16-line-tall sprite
+    # happened to be shifted by exactly 0 -- confirmed broken in practice
+    # for shorter/moving sprites (see 7800port.md), not just a hypothetical.
+    total_span_bytes = 31 * 256
     out_bytes = [0] * total_span_bytes
     for f in range(num_frames):
         for y in range(args.height):
-            page_index = 8 + args.height - 1 - y
+            page_index = 15 - y
             page_start = page_index * 256
             frame_offset = f * width_bytes
             for b_idx in range(width_bytes):
@@ -193,9 +205,7 @@ def main():
     lines.append("")
     lines.append(f"static const uint8_t {args.symbol}_data[] __attribute__((aligned(256))) = {{")
 
-    # Only output up to the last written byte of the last page to save ROM size
-    last_useful_byte = (args.height + 16) * 256
-    for i in range(0, last_useful_byte, 12):
+    for i in range(0, total_span_bytes, 12):
         chunk = ", ".join(f"0x{v:02x}" for v in out_bytes[i : i + 12])
         lines.append(f"    {chunk},")
     lines.append("};")
@@ -205,7 +215,7 @@ def main():
     lines.append(f"static const atari7800_sprite_asset_t {args.symbol}_frames[{num_frames}] = {{")
     for f in range(num_frames):
         lines.append("  {")
-        lines.append(f"    .data = &{args.symbol}_data[2048u + {f * width_bytes}u],")
+        lines.append(f"    .data = &{args.symbol}_data[{f * width_bytes}u],")
         lines.append(f"    .width_bytes = {symbol_upper}_WIDTH_BYTES,")
         lines.append(f"    .height_lines = {symbol_upper}_HEIGHT_LINES,")
         lines.append(f"    .mode = {symbol_upper}_MODE,")

@@ -14,15 +14,8 @@
 /* Include packed spaceship frames */
 #include "assets/spaceship.h"
 
-/* Enemy sprite + its explosion animation. Local to this program (not
- * shared/fighter.sprite.h, which asset-bridge-demo.c also uses): the
- * shared header's fighter_sprite_data has no fine-Y padding (fine for a
- * demo that only ever draws it zone-aligned), but the real enemy AI
- * (below) needs pixel-fine Y positioning via draw_sprite_fine, so this
- * is regenerated from the same source PNG (fighter.png) with the full
- * fine-Y-shiftable envelope instead -- same tool, same technique as
- * spaceship.h/fighter_explode.h. */
-#include "assets/enemy.h"
+/* Explosion animation (regular enemy sprite itself is folded into
+ * misc_sprite_data below, alongside star/bullet -- see its own comment). */
 #include "assets/fighter_explode.h"
 
 /* Include HUD font. This example lives under examples/atari7800-supergame/
@@ -63,13 +56,16 @@ static const int16_t cos_table[16] = {
  * reachable up to shift=15 i.e. window [15,30]) -- pages 16-30 are explicit
  * trailing padding, not reachable ROM garbage.
  *
- * Shares its 31-page block with bullet_sprite (below) rather than each
- * getting an independent 7936-byte array: both are single-byte-wide
- * (4px) MARIA_STRIDED assets needing the same 31-page fine-Y envelope,
- * so a second, byte-1 "column" in the same pages costs nothing extra --
- * same technique as spaceship_data's 16 frames or title_screen_data's
- * chunks sharing one block, just with 2 tiny sprites instead of many
- * animation frames. This one change was needed to fit the level-1 music
+ * Shares its 31-page block with bullet_sprite and enemy_sprite (below)
+ * rather than each getting an independent 7936-byte array: all three need
+ * the exact same 31-page fine-Y envelope (utils/pack_sprites_to_strided.py
+ * generates this identical envelope regardless of a sprite's own height --
+ * see its own comment, fixed in 7800port.md #27 -- so a real, moving
+ * sprite like the enemy needs it too, not just these two), so extra
+ * byte-column "channels" in the same pages cost nothing extra -- same
+ * technique as spaceship_data's 16 frames or title_screen_data's chunks
+ * sharing one block, just with 3 tiny sprites instead of many animation
+ * frames. This one change was needed to fit the level-1 music
  * (song_level1) within 48K's actual usable ROM budget -- see
  * 7800port.md #22. */
 static const uint8_t misc_sprite_data[31 * 256] __attribute__((aligned(256)))
@@ -79,6 +75,18 @@ static const uint8_t misc_sprite_data[31 * 256] __attribute__((aligned(256)))
   [13 * 256 + 1] = 0x14, /* bullet, page 13: row 2 */
   [14 * 256 + 1] = 0x14, /* bullet, page 14: row 1 */
   [15 * 256 + 1] = 0x14, /* bullet, page 15: row 0 (top) */
+  /* enemy_sprite, byte-columns 2-3 (2 bytes/row, 8x8 pixels): transcribed
+   * directly from utils/pack_sprites_to_strided.py's own output against
+   * fighter.png (examples/atari7800/assets/fighter.sprite.h's original
+   * source), pages 8-15 = rows 7-0 (page 15 - row, per that tool's fixed
+   * anchor). Rows 0 and 7 are blank (0x00 0x00, omitted -- sparse
+   * initializer defaults to 0). */
+  [9  * 256 + 2] = 0x03, [9  * 256 + 3] = 0xc0, /* row 6 */
+  [10 * 256 + 2] = 0x3f, [10 * 256 + 3] = 0xfc, /* row 5 */
+  [11 * 256 + 2] = 0x3f, [11 * 256 + 3] = 0xfc, /* row 4 */
+  [12 * 256 + 2] = 0x0f, [12 * 256 + 3] = 0xf0, /* row 3 */
+  [13 * 256 + 2] = 0x0a, [13 * 256 + 3] = 0x50, /* row 2 */
+  [14 * 256 + 2] = 0x02, [14 * 256 + 3] = 0x40, /* row 1 */
 };
 
 static const atari7800_sprite_asset_t star_sprite = {
@@ -102,6 +110,22 @@ static const atari7800_sprite_asset_t bullet_sprite = {
   .mode = 0x40u,
   .palette = 1u,
   .width_twos_comp = 0x1fu,
+  .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED
+};
+
+/* Regular enemy sprite (astrowing.bas's own fighter.png, recolored via
+ * the "Enemy" palette, index 3, matching P3C1-3) -- 8x8, 2 bytes/row.
+ * Needs the same fine-Y shiftability as the ship (draw_sprite_fine) now
+ * that it actually moves under real AI, unlike the placeholder single
+ * drifting enemy this replaced (7800port.md #26), which stayed zone-
+ * aligned specifically to avoid needing this. */
+static const atari7800_sprite_asset_t enemy_sprite = {
+  .data = &misc_sprite_data[2],
+  .width_bytes = 2u,
+  .height_lines = 8u,
+  .mode = 0x40u,
+  .palette = 3u,
+  .width_twos_comp = 0x1eu,
   .data_layout = ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED
 };
 
@@ -828,9 +852,15 @@ int main(void) {
     ship.palette = 5; /* Use Palette 5 (Spaceship) */
     draw_sprite_fine(&ship, 72, 80);
 
-    /* astrowing.bas:2445-2459's draw_player_bullets. */
+    /* astrowing.bas:2445-2459's draw_player_bullets. Clipped to gameplay
+     * area Y >= 16, same guard and reason as the star loop above: a
+     * bullet can fly straight up through the pinned-static HUD zone
+     * (nothing stops it, unlike the ship which never moves on screen),
+     * and drawing into a static zone doesn't get cleared next frame like
+     * a normal zone does -- confirmed hands-on as real stuck "residual"
+     * sprites, not hypothetical. */
     for (i = 0; i < 4; ++i) {
-      if (blife[i] != 0) {
+      if (blife[i] != 0 && bul_y[i] >= 16) {
         draw_sprite_fine(&bullet_sprite, bul_x[i], bul_y[i]);
       }
     }
@@ -848,7 +878,7 @@ int main(void) {
       }
 
       if (enemy_life[i] == 1u) {
-        draw_sprite_fine(&enemy_sprite_frames[0], (uint8_t)enemy_x[i], (uint8_t)enemy_y[i]);
+        draw_sprite_fine(&enemy_sprite, (uint8_t)enemy_x[i], (uint8_t)enemy_y[i]);
       } else {
         /* astrowing.bas:2484-2489: frame = (18 - elife) / 2. Clamped to 7
          * (the last real frame): the reference's own arithmetic reaches 8
