@@ -1,4 +1,16 @@
-static const unsigned char song_title[] = {
+/* Shared between title-demo.c (flat, non-banked atari7800 platform) and
+ * astrowing.c (atari7800-supergame platform) -- see title_screen.h's own
+ * comment on ATARI7800_TITLE_BANK for why this is guarded rather than
+ * duplicated. Redefined here (not #included from title_screen.h) so this
+ * file has no dependency on that one; both just need the same macro name
+ * for a build built against the same platform. */
+#if defined(__ATARI7800_SUPERGAME__)
+#define ATARI7800_TITLE_BANK __attribute__((section(".cart_rom_bank_0.rodata")))
+#else
+#define ATARI7800_TITLE_BANK
+#endif
+
+static const unsigned char song_title[] ATARI7800_TITLE_BANK = {
   0x00, 0xf3, 0x01, 0xad, 0x02, 0x79, 0x03, 0xad, 0x04, 0xc0, 0x05, 0xac,
   0x06, 0x3c, 0x07, 0xad, 0x08, 0x00, 0x0f, 0x03, 0xff, 0x01, 0xa9, 0x03,
   0xa9, 0x04, 0xff, 0x05, 0xa8, 0x07, 0xa9, 0xff, 0x01, 0xa5, 0x03, 0xa5,

@@ -9,18 +9,22 @@
 #define ATARI7800_SCENE_ZONE_BYTES 96
 #include <atari7800.h>
 #include <atari7800_pokey.h>
+#include <mapper.h>
 
 /* Include packed spaceship frames */
 #include "assets/spaceship.h"
 
-/* Include HUD font */
-#include "../assets/fighter.sprite.h"
-#include "../assets/hud_font.h"
+/* Include HUD font. This example lives under examples/atari7800-supergame/
+ * (a different platform's example tree from these shared assets, which
+ * stay under examples/atari7800/assets/ since they're also used by
+ * title-demo.c, still built against the flat atari7800 platform). */
+#include "../../atari7800/assets/fighter.sprite.h"
+#include "../../atari7800/assets/hud_font.h"
 
 /* Title screen banner + music, shared with title-demo.c (see 7800port.md
  * #13-#19 for how these were derived/verified) rather than duplicated. */
-#include "../title-demo/assets/song_title.h"
-#include "../title-demo/assets/title_screen.h"
+#include "../../atari7800/assets/song_title.h"
+#include "../../atari7800/assets/title_screen.h"
 #include "assets/song_level1.h"
 
 /* Aligned 16-bit sine/cosine tables for ship physics */
@@ -58,7 +62,8 @@ static const int16_t cos_table[16] = {
  * animation frames. This one change was needed to fit the level-1 music
  * (song_level1) within 48K's actual usable ROM budget -- see
  * 7800port.md #22. */
-static const uint8_t misc_sprite_data[31 * 256] __attribute__((aligned(256))) = {
+static const uint8_t misc_sprite_data[31 * 256] __attribute__((aligned(256)))
+    __attribute__((section(".cart_rom_fixed_hi_extra.rodata"))) = {
   [15 * 256 + 0] = 0x40, /* star, page 15: pixel */
   [12 * 256 + 1] = 0x14, /* bullet, page 12: row 3 */
   [13 * 256 + 1] = 0x14, /* bullet, page 13: row 2 */
@@ -100,7 +105,6 @@ static const atari7800_sprite_asset_t bullet_sprite = {
  * own colors globally rather than per-star. */
 static uint8_t star_x[4];
 static uint8_t star_y[4];
-static uint8_t cycle_state = 0;
 static uint16_t frame_count = 0;
 
 /* Player spaceship state */
@@ -174,19 +178,6 @@ static atari7800_scene_t scene;
 static atari7800_glyph_run_entry_t hud_glyph_entries[16];
 static atari7800_glyph_run_t hud_glyph_run;
 
-/* Saturating counter of dropped draws (status != ATARI7800_OK) from any
- * scene zone. Harmless for stars (a missed star this frame is invisible),
- * but a nonzero count from the ship or HUD draws would mean a zone is
- * genuinely over budget and needs attention. Inspect via the emulator's
- * memory/watch view; not surfaced on screen. */
-static uint8_t budget_drops = 0;
-
-static void note_status(uint8_t status) {
-  if (status != ATARI7800_OK && budget_drops < 0xffu) {
-    ++budget_drops;
-  }
-}
-
 static void init_stars(void) {
   uint8_t i;
   for (i = 0; i < 4; ++i) {
@@ -195,11 +186,20 @@ static void init_stars(void) {
   }
 }
 
+/* cycle_state used to be its own persistent global, incremented mod 3 --
+ * but it's a pure function of frame_count (already ticking every frame
+ * regardless), so it doesn't need its own permanent zp/bss byte. Dropped
+ * as a genuine simplification (found while chasing the zp overflow that
+ * examples/atari7800-supergame/CMakeLists.txt's -mlto-zp=95 actually
+ * fixes -- LTO's zp promotion turned out to be adaptive enough that
+ * trimming one named global alone didn't reduce total zp usage at all,
+ * since it just promoted a different temporary into the freed byte). */
 static void cycle_stars(void) {
+  uint8_t cycle_state;
+
   if ((frame_count & 7) != 0) return;
 
-  cycle_state++;
-  if (cycle_state > 2) cycle_state = 0;
+  cycle_state = (uint8_t)((frame_count >> 3) % 3);
 
   if (cycle_state == 0) {
     atari7800_set_palette3(4, (atari7800_palette3_t){0x08, 0x0c, 0x0f});
@@ -366,7 +366,7 @@ static void draw_sprite_fine(const atari7800_sprite_asset_t *asset, uint8_t x, u
   atari7800_sprite_asset_t shifted_asset = *asset;
   shifted_asset.data = (const uint8_t *)((uintptr_t)shifted_asset.data + ((uint16_t)y_offset << 8));
 
-  note_status(atari7800_scene_draw_sprite(&scene, &shifted_asset, x, y));
+  (void)atari7800_scene_draw_sprite(&scene, &shifted_asset, x, y);
 }
 
 /* ---- Title screen (astrowing.bas:326-397's title_loop, ported) ----
@@ -374,7 +374,14 @@ static void draw_sprite_fine(const atari7800_sprite_asset_t *asset, uint8_t x, u
  * below re-initializes the scene from scratch, so nothing here needs to be
  * torn down explicitly -- see title-demo.c (examples/atari7800/title-demo/)
  * for this same banner/text/music layout as a standalone, more heavily
- * commented reference. */
+ * commented reference.
+ *
+ * The one genuinely one-shot piece of this program -- rendered once at
+ * boot, never touched again -- so it and its two shared asset arrays
+ * (title_screen.h/song_title.h, tagged via ATARI7800_TITLE_BANK) are the
+ * first real content moved into a SuperGame switchable bank (bank 0),
+ * freeing that ROM budget for the gameplay content still to come. See
+ * 7800port.md #25. */
 static atari7800_glyph_run_entry_t score_glyphs[8];
 static atari7800_glyph_run_t score_run;
 static atari7800_glyph_run_entry_t icon_glyphs[8];
@@ -388,6 +395,26 @@ static atari7800_glyph_run_t version_run;
 static atari7800_glyph_run_entry_t date_glyphs[8];
 static atari7800_glyph_run_t date_run;
 
+/* .cart_rom_bank_0.text, not the bare .cart_rom_bank_0 that
+ * ATARI7800_TITLE_BANK's data arrays use below (title_screen.h/
+ * song_title.h): mos-platform/atari7800-supergame/link.ld's
+ * `*(.cart_rom_bank_0 .cart_rom_bank_0.*)` wildcard places both into the
+ * same output region, but code and const data can't share one exact
+ * section name (a real "section type conflict" from the compiler, found
+ * by just trying it -- not a hypothetical).
+ *
+ * noinline matters even though nothing calls this directly today except
+ * through banked_call_8000 below (an opaque-asm indirect call LTO can't
+ * see through, so the hazard doesn't fire yet): it's cheap insurance
+ * against a future stray direct call letting LTO inline this body into
+ * fixed-region code that would then read title_screen_data0/1 at their
+ * bank-0-only addresses without a bank switch having happened -- a
+ * silent wrong-bank-read bug, not just bloat. Confirmed cheap: removing
+ * it to chase an unrelated zp overflow (see cycle_stars's own comment)
+ * made no difference to zp usage at all -- non-inlined-function locals
+ * don't compete for this platform's named-global zp budget the way a
+ * persistent global does. */
+__attribute__((noinline, section(".cart_rom_bank_0.text")))
 static void title_screen_loop(void) {
   uint8_t zone_index;
   uint8_t chunk_index;
@@ -490,7 +517,10 @@ int main(void) {
   uint8_t i;
   const uint8_t *music_cursor = song_level1;
 
-  title_screen_loop();
+  /* title_screen_loop lives in switchable bank 0 (see its own comment
+   * above) -- main() itself runs from the fixed region, so reaching it
+   * needs banked_call_8000 (mapper.h) rather than a plain call. */
+  banked_call_8000(0, title_screen_loop);
 
   /* atari7800_pokey_init() re-clears every POKEY register (AUDC1-4
    * included), silencing whatever note the title music was on when the
@@ -521,16 +551,16 @@ int main(void) {
 
   /* A non-OK status here means hud_glyph_entries is sized too small for the
    * HUD string -- a build-time bug, not a runtime budget issue. */
-  note_status(atari7800_build_glyph_run(&hud_font, "SHLD:100 L:3",
+  (void)atari7800_build_glyph_run(&hud_font, "SHLD:100 L:3",
       hud_glyph_entries,
       (uint8_t)(sizeof(hud_glyph_entries) / sizeof(hud_glyph_entries[0])),
-      &hud_glyph_run));
+      &hud_glyph_run);
 
   /* HUD text never changes in this demo, so draw it once and pin its zone
    * static: begin_frame/end_frame then leave it alone every frame instead
    * of re-blitting unchanged glyphs. */
   atari7800_scene_begin_frame(&scene);
-  note_status(atari7800_scene_draw_glyph_run(&scene, &hud_font, 4, 8, &hud_glyph_run));
+  (void)atari7800_scene_draw_glyph_run(&scene, &hud_font, 4, 8, &hud_glyph_run);
   atari7800_scene_set_zone_static(&scene, 8, 1);
   atari7800_scene_end_frame(&scene);
 
@@ -618,7 +648,7 @@ int main(void) {
      * / spaceship_data), so it's drawn at a fixed, zone-aligned Y directly
      * rather than draw_sprite_fine's page-shift trick, which would read
      * past the asset's declared size for a non-zone-aligned Y. */
-    note_status(atari7800_scene_draw_sprite(&scene, &fighter_sprite, enemy_x, enemy_y));
+    (void)atari7800_scene_draw_sprite(&scene, &fighter_sprite, enemy_x, enemy_y);
 
     /* HUD text is pinned static residency (see setup above) -- nothing to
      * draw here every frame. */

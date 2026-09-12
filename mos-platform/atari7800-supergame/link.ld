@@ -186,6 +186,19 @@ SECTIONS {
 
   .cart_rom_fixed : { *(.cart_rom_fixed .cart_rom_fixed.*) } >cart_rom_fixed_lo
 
+  /* Overflow room for generic code/rodata that doesn't fit in
+   * cart_rom_fixed_lo (the default c_readonly target) alongside everything
+   * else living there -- a program tags specific large, self-contained
+   * assets with __attribute__((section(".cart_rom_fixed_hi_extra.rodata")))
+   * to move them here explicitly (e.g. examples/atari7800-supergame/
+   * astrowing/astrowing.c's misc_sprite_data/spaceship_data). Bounded to
+   * cart_rom_fixed_hi_code (not the full cart_rom_fixed_hi), so overflow
+   * into the footer fails to link instead of silently colliding with it,
+   * same rationale as .cart_rom_reset_entry below. */
+  .cart_rom_fixed_hi_extra : {
+    *(.cart_rom_fixed_hi_extra .cart_rom_fixed_hi_extra.*)
+  } >cart_rom_fixed_hi_code
+
   /* Reset entry trampoline -- placed in the fixed-hi bank alongside the
    * vectors/footer it's addressed by, same KEEP() rationale as flat link.ld. */
   .cart_rom_reset_entry : {

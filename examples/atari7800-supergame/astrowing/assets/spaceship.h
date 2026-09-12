@@ -13,7 +13,13 @@
 #define SPACESHIP_DATA_LAYOUT ATARI7800_SPRITE_LAYOUT_MARIA_STRIDED
 #define SPACESHIP_NUM_FRAMES 16u
 
-static const uint8_t spaceship_data[] __attribute__((aligned(256))) = {
+/* Placed in the fixed-hi bank's overflow region (see
+ * mos-platform/atari7800-supergame/link.ld's .cart_rom_fixed_hi_extra) --
+ * this asset alone is ~6KB, needed to fit astrowing.c's remaining
+ * fixed-region content (code + everything else's rodata) into
+ * cart_rom_fixed_lo's 16KiB. */
+static const uint8_t spaceship_data[] __attribute__((aligned(256)))
+    __attribute__((section(".cart_rom_fixed_hi_extra.rodata"))) = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,

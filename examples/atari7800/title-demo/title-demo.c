@@ -39,8 +39,8 @@
 #include <atari7800_pokey.h>
 
 #include "../assets/hud_font.h"
-#include "assets/song_title.h"
-#include "assets/title_screen.h"
+#include "../assets/song_title.h"
+#include "../assets/title_screen.h"
 
 static atari7800_scene_t scene;
 static atari7800_glyph_run_entry_t score_glyphs[8];

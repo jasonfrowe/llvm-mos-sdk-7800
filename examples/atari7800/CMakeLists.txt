@@ -10,14 +10,6 @@ add_executable(asset-bridge-demo.a78 asset-bridge-demo.c)
 target_compile_options(asset-bridge-demo.a78 PRIVATE "-Os")
 install_example(asset-bridge-demo.a78)
 
-add_executable(astrowing.a78 astrowing/astrowing.c)
-target_compile_options(astrowing.a78 PRIVATE "-Os")
-# 48K + POKEY@450: astrowing.c now opens on the real title screen (with its
-# music) before handing off to gameplay on a fire-button press -- same
-# config as title-demo.a78, needed for the same reasons (7800port.md #19).
-target_link_options(astrowing.a78 PRIVATE "-Wl,--defsym=__cart_pokey_flags=2" "-Wl,--defsym=__cart_rom_size=48")
-install_example(astrowing.a78)
-
 # Minimal POKEY crash repro: 48K + POKEY@450, byte-for-byte identical header
 # to the reference astrowing.bas build (see 7800port.md #16), yet the CPU
 # still crashes within ~1 second even with NO scene/graphics code at all.
@@ -41,10 +33,3 @@ target_compile_options(title-demo.a78 PRIVATE "-Os")
 # alike.
 target_link_options(title-demo.a78 PRIVATE "-Wl,--defsym=__cart_pokey_flags=2" "-Wl,--defsym=__cart_rom_size=48")
 install_example(title-demo.a78)
-
-option(ATARI7800_ASTROWING_DEBUG_FRAME_BUDGET
-  "Flash the background color during astrowing's per-frame CPU work, to visually check it fits inside vblank"
-  OFF)
-if(ATARI7800_ASTROWING_DEBUG_FRAME_BUDGET)
-  target_compile_definitions(astrowing.a78 PRIVATE ATARI7800_DEBUG_FRAME_BUDGET=1)
-endif()
