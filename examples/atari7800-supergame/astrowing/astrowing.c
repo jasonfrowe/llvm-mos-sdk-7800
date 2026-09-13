@@ -604,18 +604,43 @@ static void draw_sprite_fine(const atari7800_sprite_asset_t *asset, uint8_t x, u
   draw_sprite_at_shift(asset, x, y, (int8_t)(y & 15u));
 }
 
-/* A real port of astrowing.bas's own plotsprite4.asm, used uniformly for
- * every dynamically-positioned sprite (star, bullet, enemy, explosion
- * frames): a single MARIA Direct Mode object's render window is exactly
- * one 16-line zone, so whenever the object isn't exactly zone-aligned
- * (in_zone != 0), plotsprite4 *always* emits a second Direct Mode object
- * in the next zone, whose graphic-address high byte is exactly one
- * zone-height (16 pages) less than the first's -- continuing the same
- * downward per-scanline page countdown across the boundary rather than
- * truncating it. This is plotsprite4's own unconditional `cmp #1` check,
- * not a "only split if truly needed" threshold -- an earlier version of
- * this function used in_zone > 8 (7800port.md #28/#29), which was this
- * port's own invention, not the reference's actual logic.
+/* A port of astrowing.bas's own plotsprite4.asm, used uniformly for every
+ * dynamically-positioned sprite (star, bullet, enemy, explosion frames):
+ * a single MARIA Direct Mode object's render window is exactly one
+ * 16-line zone, so a sprite that doesn't fit the rest of its zone needs a
+ * *second* Direct Mode object in the next zone, whose graphic-address
+ * high byte is exactly one zone-height (16 pages) less than the first's
+ * -- continuing the same downward per-scanline page countdown across the
+ * boundary rather than truncating it.
+ *
+ * plotsprite4.asm itself emits this second object unconditionally
+ * whenever the sprite isn't exactly zone-aligned (in_zone != 0), even
+ * though for a short sprite most of those cases contribute nothing but
+ * blank rows -- 7800basic can get away with that because its own
+ * incgraphic/gfxprintf packs many sprites' graphics tables back-to-back
+ * in ROM (with dmahole letting code fill the gaps), so an unconditional
+ * second object's "extra" read past this sprite's own table just lands
+ * in a *neighboring* table's own blank margin, not undefined memory.
+ * This port doesn't replicate that neighbor-sharing scheme -- each
+ * sprite's own safety margin here is explicit, finite padding (see
+ * shared_sprite_data's own comment) -- so porting the unconditional
+ * check verbatim reads out of bounds for small in_zone values (1..8 for
+ * an 8-row sprite, whose second-entry page would be negative relative to
+ * this array's own start): confirmed as the actual cause of fighters
+ * still disappearing/corrupting near the top of the screen after #30,
+ * not a new bug class, the same padding mismatch in a spot #30's own
+ * verification frame (in_zone 7->10, i.e. already > 8) didn't exercise.
+ *
+ * Fix: only emit the second object when the sprite's own real height
+ * actually needs it -- i.e. when fewer than height_lines rows remain in
+ * the current zone. For every sprite this array holds (height_lines=8),
+ * that's in_zone > 8, matching shared_sprite_data's own 7-page leading
+ * margin exactly (worst case in_zone=15 needs second-entry pages
+ * [15-9,15-9+15]=[6,21], entirely within the padded array). Skipping the
+ * second object when it's not needed produces an *identical* visual
+ * result to emitting a guaranteed-blank one -- this is a correctness-
+ * preserving optimization this port's own array layout requires, not a
+ * deviation from the reference's actual visible behavior.
  *
  * Confirmed against the emulator's own MARIA model
  * (third_party/a7800/src/mame/video/maria.cpp's draw_scanline/startdma):
@@ -624,12 +649,11 @@ static void draw_sprite_fine(const atari7800_sprite_asset_t *asset, uint8_t x, u
  * placed one zone down with a base address 16 pages lower picks up
  * exactly where the first left off -- verified directly against actual
  * MARIA zone RAM for a live crossing case, not just derived by hand
- * (7800port.md #29/#30). shared_sprite_data's own comment covers the
- * leading-padding this needs. */
+ * (7800port.md #29/#30/#31). */
 static void draw_sprite_zone_aware(const atari7800_sprite_asset_t *asset, uint8_t x, uint8_t y) {
   uint8_t in_zone = (uint8_t)(y & 15u);
   draw_sprite_at_shift(asset, x, y, (int8_t)in_zone);
-  if (in_zone != 0u) {
+  if (in_zone > (uint8_t)(16u - asset->height_lines)) {
     draw_sprite_at_shift(asset, x, (uint8_t)(y + 16u), (int8_t)(in_zone - 16));
   }
 }
