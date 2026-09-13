@@ -133,11 +133,18 @@ static const atari7800_sprite_asset_t star_sprite = {
 /* astrowing.bas's bullet_conv.png (4x16, indexed): real ink is only a
  * 2px-wide, 4-row mark at the top (rows 0-3, packed byte 0x14 --
  * pack_160a([0,1,1,0])), the rest of the 16-line canvas is blank.
- * Palette 1 ("Player Bullets"), matching `plotsprite bullet_conv 1 ...`. */
+ * Palette 1 ("Player Bullets"), matching `plotsprite bullet_conv 1 ...`.
+ * height_lines=4 (not 8): draw_sprite_zone_aware's split threshold is
+ * height-derived (16-height_lines), and only rows 0-3 are real content
+ * here -- declaring the true height raises the threshold to in_zone>12
+ * instead of >8, skipping the split for in_zone 9-12 where it would only
+ * ever produce guaranteed-blank rows, same reasoning as star's move to
+ * draw_sprite_fine (7800port.md #32) but bullet still genuinely needs
+ * the split for in_zone 13-15, unlike star. */
 static const atari7800_sprite_asset_t bullet_sprite = {
   .data = &shared_sprite_data[7 * 256 + 1],
   .width_bytes = 1u,
-  .height_lines = 8u,
+  .height_lines = 4u,
   .mode = 0x40u,
   .palette = 1u,
   .width_twos_comp = 0x1fu,
@@ -946,10 +953,21 @@ int main(void) {
     atari7800_scene_begin_frame(&scene);
 
     /* Render stars, clipping to gameplay area Y >= 16 to keep the HUD
-     * zone clean. */
+     * zone clean. draw_sprite_fine, not draw_sprite_zone_aware: star's
+     * only real content is a single pixel at its own local_row 0, which
+     * shows at zone-scanline r=in_zone -- always inside the current zone
+     * for every in_zone 0-15, so it can never actually be truncated and
+     * never benefits from the crossing split. Drawn 4 times every single
+     * frame (unlike enemies, which only sometimes exist), the split's
+     * wasted extra atari7800_scene_draw_sprite call for roughly half of
+     * all random Y values was real, measurable draw-phase CPU cost --
+     * confirmed via ATARI7800_DEBUG_FRAME_BUDGET actually overrunning
+     * into active display for the whole top half of the screen, which is
+     * what let a star and a crossing enemy sharing a zone corrupt each
+     * other there (not a MARIA limitation -- see 7800port.md #32). */
     for (i = 0; i < 4; ++i) {
       if (star_y[i] >= 16) {
-        draw_sprite_zone_aware(&star_sprite, star_x[i], star_y[i]);
+        draw_sprite_fine(&star_sprite, star_x[i], star_y[i]);
       }
     }
 
